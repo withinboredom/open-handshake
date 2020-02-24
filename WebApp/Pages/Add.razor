@@ -1,0 +1,66 @@
+﻿@page "/add"
+@inject HttpClient client
+
+<h1>Add or Check Resolver</h1>
+
+<input @bind="ipAddress" placeholder="Public IP Address" type="text" name="ipaddress" />
+<button @onclick="Check">Check</button>
+
+@if (response != null)
+{
+    <div>
+        Data:
+        <div>
+            <h2>@response.IpAddress</h2>
+            <div>
+                Monitoring since: @response.MonitoringSince
+            </div>
+            <div>
+                Up Time: @response.UpTime
+            </div>
+            <div>
+                Is Resolver Resolving handshake domains: @(response.IsHandshake == null ? "unknown" : response.IsHandshake.Value ? "yes" : "no")
+            </div>
+        </div>
+    </div>
+}
+
+@code
+{
+    string ipAddress { get; set; }
+    Response response;
+    public class SendMessage
+    {
+        public string Host { get; set; }
+        public long Port { get; set; }
+    }
+
+    public class Response
+    {
+        public string UpTime { get; set; }
+        public string IpAddress { get; set; }
+        public DateTime MonitoringSince { get; set; }
+        public bool IsRecursive { get; set; }
+        public bool? IsHandshake { get; set; }
+    }
+
+    private async Task Check()
+    {
+        var ip = ipAddress;
+        try
+        {
+            response = await client.GetJsonAsync<Response>($"https://handshake-batch.azurewebsites.net/api/host/{ip}");
+        }
+        catch
+        {
+            response = new Response {
+                IpAddress = ip,
+                MonitoringSince = DateTime.Now,
+                IsHandshake = null,
+                IsRecursive = false,
+                UpTime = "unknown",
+            };
+            await client.PutAsync($"https://handshake-batch.azurewebsites.net/api/host/{ip}", null);
+        }
+    }
+}

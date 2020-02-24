@@ -1,0 +1,53 @@
+﻿@page "/"
+@using System.Net
+@using System.Threading
+@using DnsClient
+@inject HttpClient client
+
+<h1>Handshake Public DNS Tool</h1>
+
+@if (data == null)
+{
+    <p>
+        Getting a list of public resolvers...
+    </p>
+}
+else
+{
+    <p>
+        You can use any of the below resolvers. It's recommended to use at least two.
+    </p>
+    <ol>
+        @foreach (var server in data.Results.OrderBy(x => x.DnsUptime))
+        {
+            <li>
+                <code>@server.IpAddress</code> (uptime: @(server.DnsUptime * 100)%)
+            </li>
+        }
+    </ol>
+}
+
+@code
+{
+    private Response data;
+
+    public class Response
+    {
+        public int Examined { get; set; }
+        public long ResultCount { get; set; }
+        public List<Server> Results { get; set; }
+    }
+
+    public class Server
+    {
+        public string IpAddress { get; set; }
+        public decimal DnsUptime { get; set; }
+        public bool Ipv4Support { get; set; }
+        public bool Ipv6Support { get; set; }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        data = await client.GetJsonAsync<Response>("https://handshake-batch.azurewebsites.net/api/all");
+    }
+}

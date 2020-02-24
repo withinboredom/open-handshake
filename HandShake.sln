@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.29814.53
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "HandShake", "HandShake\HandShake.csproj", "{D3C6CA5F-0AFF-40CD-85C7-7F553E79B90A}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "WebApp", "WebApp\WebApp.csproj", "{0F147CA0-3345-4D3F-B81A-84D905F84992}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{D3C6CA5F-0AFF-40CD-85C7-7F553E79B90A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D3C6CA5F-0AFF-40CD-85C7-7F553E79B90A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D3C6CA5F-0AFF-40CD-85C7-7F553E79B90A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D3C6CA5F-0AFF-40CD-85C7-7F553E79B90A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0F147CA0-3345-4D3F-B81A-84D905F84992}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0F147CA0-3345-4D3F-B81A-84D905F84992}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0F147CA0-3345-4D3F-B81A-84D905F84992}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0F147CA0-3345-4D3F-B81A-84D905F84992}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {4D49B3D8-7692-450C-8039-DC8CC3CBC20D}
+	EndGlobalSection
+EndGlobal
