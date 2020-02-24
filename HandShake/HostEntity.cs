@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Net;
 using System.Net.Http;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading.Tasks;
 using DnsClient;
 using Microsoft.Azure.WebJobs;
@@ -12,9 +14,8 @@ namespace HandShake
 {
     public interface IHostEntity
     {
-        Task<bool> CheckUp(HostMessage message);
-        Task<bool> TryGetOrchestrationLock(string orchestrationId);
-        Task ReleaseLock();
+        Task<bool> CheckUp();
+        Task SetIp(string ipAddress);
     }
 
     [JsonObject(MemberSerialization.OptIn)]
@@ -43,27 +44,28 @@ namespace HandShake
 
         [JsonProperty] public DateTime? MonitoringSince { get; set; }
 
-        public async Task<bool> CheckUp(HostMessage message)
+        [JsonProperty] public string WatchDog { get; set; }
+
+        public Task SetIp(string ipAddress)
         {
-            if (IpAddress == null)
+            IpAddress = ipAddress;
+            return Task.CompletedTask;
+        }
+
+        public async Task<bool> CheckUp()
+        {
+            if (WatchDog == null)
             {
-                IpAddress = message.Host;
-            }
-            else if (IpAddress != message.Host)
-            {
-                _logger.LogError("{ipAddress} was addressed with {messageAddress}", IpAddress, message.Host);
-                return false;
+                WatchDog = Entity.Current.StartNewOrchestration(nameof(WatchDog), Entity.Current.EntityId);
             }
 
-            if(MonitoringSince == null)
-            {
-                MonitoringSince = DateTime.UtcNow;
-            }
+            if (MonitoringSince == null) MonitoringSince = DateTime.UtcNow;
 
             NumberSamples += 1;
 
             var endpoint = new IPEndPoint(IPAddress.Parse(IpAddress), 53);
-            var client = new LookupClient(endpoint) {UseTcpFallback = true, Timeout = TimeSpan.FromSeconds(2), ThrowDnsErrors = false};
+            var client = new LookupClient(endpoint)
+                {UseTcpFallback = true, Timeout = TimeSpan.FromSeconds(2), ThrowDnsErrors = false};
 
             var hasDns = false;
             try
@@ -113,6 +115,22 @@ namespace HandShake
             return hasDns;
         }
 
+        public static string calculateHash(string message)
+        {
+            using var hasher = SHA256.Create();
+            var bytes = hasher.ComputeHash(Encoding.UTF8.GetBytes(message));
+            var builder = new StringBuilder();
+
+            foreach (var t in bytes) builder.Append(t.ToString("x2"));
+
+            return builder.ToString();
+        }
+
+        public static EntityId Id(string ipAddress)
+        {
+            return new EntityId(nameof(HostEntity), calculateHash(ipAddress));
+        }
+
         private void UpdateUptime(bool isSuccess)
         {
             var alpha = 2 / (NumberSamples + 1);
@@ -129,32 +147,6 @@ namespace HandShake
         public static Task Run([EntityTrigger] IDurableEntityContext context, ILogger logger)
         {
             return context.DispatchAsync<HostEntity>(logger);
-        }
-
-        [JsonProperty]
-        public string Lock { get; set; }
-
-        public async Task<bool> TryGetOrchestrationLock(string orchestrationId)
-        {
-            if (orchestrationId == Lock)
-            {
-                // todo: renew lock
-            }
-
-            if (Lock == null)
-            {
-                Entity.Current.StartNewOrchestration(nameof(Locker), Entity.Current.EntityId);
-                Lock = orchestrationId;
-                return true;
-            }
-
-            return false;
-        }
-
-        public Task ReleaseLock()
-        {
-            Lock = null;
-            return Task.CompletedTask;
         }
     }
 }

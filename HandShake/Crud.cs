@@ -1,4 +1,3 @@
-using System.IO;
 using System.Net;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
@@ -7,7 +6,6 @@ using Microsoft.Azure.WebJobs;
 using Microsoft.Azure.WebJobs.Extensions.DurableTask;
 using Microsoft.Azure.WebJobs.Extensions.Http;
 using Microsoft.Extensions.Logging;
-using Newtonsoft.Json;
 
 namespace HandShake
 {
@@ -18,7 +16,7 @@ namespace HandShake
             [HttpTrigger(AuthorizationLevel.Anonymous, "put", Route = "host/{ip}")]
             HttpRequest req,
             string ip,
-            [Queue("hosts")] IAsyncCollector<HostMessage> messages,
+            [DurableClient] IDurableEntityClient client,
             ILogger log)
         {
             try
@@ -31,10 +29,10 @@ namespace HandShake
             }
 
             log.LogInformation("Adding {ipAddress} to bucket", ip);
-            await messages.AddAsync(new HostMessage {
-                Host = ip,
-                Port = 53,
-            });
+
+            await client.SignalEntityAsync<IHostEntity>(HostEntity.Id(ip), entity => entity.SetIp(ip));
+            await client.SignalEntityAsync<IHostEntity>(HostEntity.Id(ip),
+                entity => entity.CheckUp());
 
             return new OkResult();
         }
@@ -47,13 +45,13 @@ namespace HandShake
             try
             {
                 IPAddress.Parse(ip);
-            } catch
+            }
+            catch
             {
                 return new BadRequestResult();
             }
 
-            var entity = await client.ReadEntityStateAsync<HostEntity>(new EntityId(nameof(HostEntity),
-                HostOrchestrator.calculateHash(new HostMessage {Host = ip})));
+            var entity = await client.ReadEntityStateAsync<HostEntity>(HostEntity.Id(ip));
 
             if (!entity.EntityExists) return new NotFoundResult();
 
@@ -61,7 +59,7 @@ namespace HandShake
             {
                 uptime = entity.EntityState.DnsUptime * 100m + "%", ipAddress = entity.EntityState.IpAddress,
                 monitoringSince = entity.EntityState.MonitoringSince, ARecords = entity.EntityState.ipv4Support,
-                isRecursive = true, isHandshake = (bool?) null,
+                isRecursive = true, isHandshake = (bool?) null
             });
         }
     }

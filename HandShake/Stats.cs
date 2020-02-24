@@ -83,7 +83,8 @@ namespace HandShake
                 var all = await client.ReadEntityStateAsync<List<EntityId>>(HostList.Id);
                 if (all.EntityExists)
                 {
-                    foreach (var entity in all.EntityState)
+                    var list = all.EntityState.Distinct();
+                    foreach (var entity in list)
                     {
                         examined += 1;
                         var state = await client.ReadEntityStateAsync<HostEntity>(entity);
