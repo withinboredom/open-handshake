@@ -8,12 +8,12 @@ using Microsoft.Extensions.Logging;
 namespace HandShake
 {
     /// <summary>
-    /// Watchdog for host entities
+    ///     Watchdog for host entities
     /// </summary>
     public static class Watchdog
     {
         /// <summary>
-        /// Gets the state of the host.
+        ///     Gets the state of the host.
         /// </summary>
         /// <param name="context">The context.</param>
         /// <param name="client">The client.</param>
@@ -27,7 +27,7 @@ namespace HandShake
         }
 
         /// <summary>
-        /// Runs the specified context.
+        ///     Runs the specified context.
         /// </summary>
         /// <param name="context">The context.</param>
         /// <param name="logger">The logger.</param>
@@ -43,22 +43,28 @@ namespace HandShake
             if (!state.EntityExists)
             {
                 logger.LogError("Attempted to start watch dog for a non-existing host entity: {hostId}", hostId);
-                return false;
+                throw new Exception("Failed to start watch dog for non-existing entity");
             }
+
+            if (context.InstanceId != HostEntity.calculateHash(state.EntityState.IpAddress))
+                throw new Exception("violent suicide committed on watchdog!");
 
             if (state.EntityState.ipv4Support || state.EntityState.ipv6Support)
             {
                 context.SignalEntity(HostList.Id, HostList.AddHost, hostId);
-            } else
+                logger.LogInformation("Adding {hostId} to active hosts", hostId);
+            }
+            else
             {
                 context.SignalEntity(HostList.Id, HostList.RemoveHost, hostId);
+                logger.LogInformation("Removing {hostId} from active hosts", hostId);
             }
 
             var nextCheck = state.EntityState.DnsUptime switch
             {
                 { } v when v < 0.2m => TimeSpan.FromDays(1),
-                { } v when v >= 0.2m && v < 0.75m => TimeSpan.FromHours(12),
-                { } v when v >= 0.75m => TimeSpan.FromHours(1),
+                { } v when v >= 0.2m && v < 0.75m => TimeSpan.FromHours(12 + new Random().Next(-1, 1)),
+                { } v when v >= 0.75m => TimeSpan.FromMinutes(60 + new Random().Next(-5, 5)),
                 _ => TimeSpan.FromHours(1)
             };
 

@@ -1,9 +1,11 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.WebJobs;
 using Microsoft.Azure.WebJobs.Extensions.DurableTask;
 using Microsoft.Azure.WebJobs.Extensions.Http;
@@ -21,6 +23,7 @@ namespace HandShake
             return client.SignalEntityAsync<IHostEntity>(hostId, entity => entity.CheckUp());
         }
 
+        /*
         [FunctionName(nameof(HandleList))]
         public static async Task HandleList([QueueTrigger("list-migration")] NextQueue next, [DurableClient] IDurableEntityClient client, [Queue("migration")] IAsyncCollector<EntityId> toMigrate, [Queue("list-migration")] IAsyncCollector<NextQueue> nextList, ILogger logger)
         {
@@ -32,7 +35,7 @@ namespace HandShake
             {
                 await nextList.AddAsync(new NextQueue {token = nextToken});
             }
-        }
+        }*/
 
         public class NextQueue
         {
@@ -64,6 +67,44 @@ namespace HandShake
         {
             logger.LogInformation("Triggering migration");
             return new NextQueue {token = await DoQuery(null, toMigrate, client)};
+        }
+
+        [FunctionName(nameof(BrokenCheck))]
+        public static async Task<ActionResult> BrokenCheck([HttpTrigger(AuthorizationLevel.Admin, "get", Route = "broke")]
+            HttpRequest req, ILogger logger, [DurableClient] IDurableEntityClient client, [Queue("migration")] IAsyncCollector<EntityId> queue)
+        {
+            string token = null;
+
+            var ids = new List<EntityId>();
+
+            do
+            {
+                var query = new EntityQuery
+                {
+                    ContinuationToken = token,
+                    EntityName = nameof(HostEntity),
+                    FetchState = false,
+                    PageSize = 5000,
+                };
+                var result = await client.ListEntitiesAsync(query, CancellationToken.None);
+                token = result.ContinuationToken;
+
+
+                foreach (var entity in result.Entities)
+                {
+                    if(ids.Contains(entity.EntityId)) continue;
+                    ids.Add(entity.EntityId);
+                }
+
+                break;
+            } while (!string.IsNullOrEmpty(token));
+
+            foreach (var id in ids)
+            {
+                await queue.AddAsync(id);
+            }
+
+            return new OkObjectResult(new { items = ids.Count });
         }
     }
 }

@@ -44,8 +44,6 @@ namespace HandShake
 
         [JsonProperty] public DateTime? MonitoringSince { get; set; }
 
-        [JsonProperty] public string WatchDog { get; set; }
-
         public Task SetIp(string ipAddress)
         {
             IpAddress = ipAddress;
@@ -54,10 +52,14 @@ namespace HandShake
 
         public async Task<bool> CheckUp()
         {
-            if (WatchDog == null)
+            if(string.IsNullOrWhiteSpace(IpAddress))
             {
-                WatchDog = Entity.Current.StartNewOrchestration(nameof(WatchDog), Entity.Current.EntityId);
+                _logger.LogCritical("Host with no address: {hostId}", Entity.Current.EntityId);
+                Entity.Current.DeleteState();
+                return false;
             }
+
+            Entity.Current.StartNewOrchestration(nameof(Watchdog), Entity.Current.EntityId, calculateHash(IpAddress));
 
             if (MonitoringSince == null) MonitoringSince = DateTime.UtcNow;
 
@@ -139,8 +141,8 @@ namespace HandShake
 
         private void UpdateDnsResult(bool isSuccess)
         {
-            var alpha = 2 / (NumberSamples + 1);
-            DnsUptime = alpha * (isSuccess ? 1 : 0) + (1 - alpha) * DnsUptime;
+            var alpha = 2m / (decimal) (NumberSamples + 1m);
+            DnsUptime = alpha * (isSuccess ? 1m : 0m) + (1 - alpha) * DnsUptime;
         }
 
         [FunctionName(nameof(HostEntity))]
