@@ -55,13 +55,16 @@ namespace HandShake
 
         private static void AddTo(List<object> output, HostEntity state)
         {
-            output.Add(new
-            {
-                state.IpAddress,
-                state.DnsUptime,
-                state.ipv4Support,
-                state.ipv6Support,
-            });
+            //if(state.Uptime > 0.8m)
+                output.Add(new
+                {
+                    state.IpAddress,
+                    state.DnsUptime,
+                    state.ipv4Support,
+                    ipv6Support = false,
+                    state.HandshakeSupport,
+                    state.LastChecked,
+                });
         }
 
         [FunctionName(nameof(All))]

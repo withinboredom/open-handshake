@@ -57,9 +57,13 @@ namespace HandShake
 
             return new OkObjectResult(new
             {
-                uptime = entity.EntityState.DnsUptime * 100m + "%", ipAddress = entity.EntityState.IpAddress,
-                monitoringSince = entity.EntityState.MonitoringSince, ARecords = entity.EntityState.ipv4Support,
-                isRecursive = true, isHandshake = (bool?) null
+                uptime = (entity.EntityState.DnsUptime * 100m).ToString("N2") + "%",
+                ipAddress = entity.EntityState.IpAddress,
+                monitoringSince = entity.EntityState.MonitoringSince,
+                ARecords = entity.EntityState.ipv4Support,
+                isRecursive = true,
+                isHandshake = entity.EntityState.HandshakeSupport,
+                entity.EntityState.LastChecked,
             });
         }
     }

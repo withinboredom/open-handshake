@@ -1,7 +1,6 @@
 ﻿@page "/"
 @using System.Net
 @using System.Threading
-@using DnsClient
 @inject HttpClient client
 
 <h1>Handshake Public DNS Tool</h1>
@@ -18,10 +17,10 @@ else
         You can use any of the below resolvers. It's recommended to use at least two.
     </p>
     <ol>
-        @foreach (var server in data.Results.OrderBy(x => x.DnsUptime))
+        @foreach (var server in data.Results.OrderBy(x => -x.DnsUptime))
         {
             <li>
-                <code>@server.IpAddress</code> (uptime: @(server.DnsUptime * 100)%)
+                <code>@server.IpAddress</code> (uptime: @(server.FriendlyUptime)%)
             </li>
         }
     </ol>
@@ -43,11 +42,15 @@ else
         public string IpAddress { get; set; }
         public decimal DnsUptime { get; set; }
         public bool Ipv4Support { get; set; }
-        public bool Ipv6Support { get; set; }
+        public bool HandshakeSupport { get; set; }
+        public string FriendlyUptime => (DnsUptime * 100m).ToString("N2");
     }
 
     protected override async Task OnInitializedAsync()
     {
-        data = await client.GetJsonAsync<Response>("https://handshake-batch.azurewebsites.net/api/all");
+        await Task.Run(async () =>
+        {
+            return data = await client.GetJsonAsync<Response>("https://handshake-batch.azurewebsites.net/api/all");
+        });
     }
 }

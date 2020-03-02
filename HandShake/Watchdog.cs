@@ -49,7 +49,7 @@ namespace HandShake
             if (context.InstanceId != HostEntity.calculateHash(state.EntityState.IpAddress))
                 throw new Exception("violent suicide committed on watchdog!");
 
-            if (state.EntityState.ipv4Support || state.EntityState.ipv6Support)
+            if (state.EntityState.ipv4Support && state.EntityState.HandshakeSupport)
             {
                 context.SignalEntity(HostList.Id, HostList.AddHost, hostId);
                 logger.LogInformation("Adding {hostId} to active hosts", hostId);

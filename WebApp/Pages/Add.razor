@@ -19,6 +19,9 @@
                 Up Time: @response.UpTime
             </div>
             <div>
+                Last Checked: @(response.LastChecked?.ToString() ?? "checking now")
+            </div>
+            <div>
                 Is Resolver Resolving handshake domains: @(response.IsHandshake == null ? "unknown" : response.IsHandshake.Value ? "yes" : "no")
             </div>
         </div>
@@ -42,6 +45,7 @@
         public DateTime MonitoringSince { get; set; }
         public bool IsRecursive { get; set; }
         public bool? IsHandshake { get; set; }
+        public DateTime? LastChecked { get; set; }
     }
 
     private async Task Check()
@@ -60,6 +64,9 @@
                 IsRecursive = false,
                 UpTime = "unknown",
             };
+        }
+        finally
+        {
             await client.PutAsync($"https://handshake-batch.azurewebsites.net/api/host/{ip}", null);
         }
     }

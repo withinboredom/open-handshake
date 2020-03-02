@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Security.Cryptography;
@@ -40,9 +41,11 @@ namespace HandShake
 
         [JsonProperty] public bool ipv4Support { get; set; }
 
-        [JsonProperty] public bool ipv6Support { get; set; }
+        [JsonProperty] public bool HandshakeSupport { get; set; }
 
         [JsonProperty] public DateTime? MonitoringSince { get; set; }
+
+        [JsonProperty] public DateTime? LastChecked { get; set; }
 
         public Task SetIp(string ipAddress)
         {
@@ -64,6 +67,8 @@ namespace HandShake
             if (MonitoringSince == null) MonitoringSince = DateTime.UtcNow;
 
             NumberSamples += 1;
+
+            LastChecked = DateTime.UtcNow;
 
             var endpoint = new IPEndPoint(IPAddress.Parse(IpAddress), 53);
             var client = new LookupClient(endpoint)
@@ -92,27 +97,15 @@ namespace HandShake
 
             try
             {
-                var dns = await client.QueryAsync("google.com", QueryType.AAAA);
-                hasDns = !dns.HasError;
+                var handshake = await client.QueryAsync("batch", QueryType.TXT);
+                HandshakeSupport = handshake.Answers.Any();
             }
             catch
             {
-                hasDns = false;
+                HandshakeSupport = false;
             }
 
-            if (!hasDns)
-            {
-                ipv6Support = false;
-            }
-            else
-            {
-                ipv6Support = true;
-                _logger.LogMetric("ipv6", 1);
-            }
-
-            hasDns = ipv6Support || ipv4Support;
-
-            UpdateDnsResult(hasDns);
+            UpdateDnsResult(hasDns && HandshakeSupport);
 
             return hasDns;
         }
