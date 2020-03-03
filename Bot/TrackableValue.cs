@@ -61,7 +61,7 @@ namespace Bot
             }
         }
 
-        public (decimal, Func<DateTime, decimal>) Predict()
+        public (decimal Slope, Func<DateTime, decimal> PredictX, Func<decimal, DateTime> PredictY) Predict()
         {
             var sumOf = (0m, 0m);
             var sumOfSqr = (0m, 0m);
@@ -100,11 +100,25 @@ namespace Bot
                 var yintercept = mean.Item2 - sCo / ss.Item1 * mean.Item1;
                 var slope = sCo / ss.Item1;
 
-                return (slope, x => slope * (decimal) (x - start.Value).TotalSeconds + yintercept);
+                return (Slope: slope, PredictX: x => slope * (decimal) (x - start.Value).TotalSeconds + yintercept, PredictY: y =>
+                {
+                    if(slope == 0)
+                    {
+                        return DateTime.MaxValue;
+                    }
+
+                    try
+                    {
+                        return start.Value + TimeSpan.FromSeconds((double) ((y - yintercept) / slope));
+                    } catch
+                    {
+                        return DateTime.MaxValue;
+                    }
+                });
             }
             catch
             {
-                return (0m, x => 0);
+                return (0m, x => 0, x => DateTime.MaxValue);
             }
         }
 

@@ -108,7 +108,7 @@ namespace Bot.NamebaseClient
             return info;
         }
 
-        public async Task<(CeilingData, CeilingData)> GetCenterPoint()
+        public async Task<(CeilingData, CeilingData, OrderBook)> GetCenterPoint()
         {
             try
             {
@@ -118,8 +118,9 @@ namespace Bot.NamebaseClient
 
                 var lowest = new CeilingData(depth.Bids, true);
                 var highest = new CeilingData(depth.Asks, false);
+                var orderBook = new OrderBook(depth);
 
-                return (lowest, highest);
+                return (lowest, highest, orderBook);
             }
             catch (ErrorResponse.TimeChanged)
             {
@@ -198,7 +199,7 @@ namespace Bot.NamebaseClient
             Console.ResetColor();
 
             // calculate positions
-            var spread = Math.Abs(ceiling.Ceiling - ceiling.Bottom) / numPositions;
+            var spread = Math.Abs(ceiling.Resistance[0].Level - ceiling.Bottom) / numPositions;
 
             if (spread == 0m) return;
 
@@ -229,7 +230,7 @@ namespace Bot.NamebaseClient
                         break;
                 }
 
-                var price = (ceiling.Ceiling - ceiling.Bottom) / numPositions;
+                var price = (ceiling.Resistance[0].Level - ceiling.Bottom) / numPositions;
                 price = ceiling.Bottom + (side == OrderSide.SELL ? 1m : -1m) * minDist + price * i;
 
                 if (Math.Abs(price - ceiling.Bottom) < minDist)

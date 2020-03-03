@@ -40,7 +40,7 @@ namespace Bot
             var strSide = side == OrderSide.BUY ? "buy " : "sell";
             return center == null || real == null
                 ? "| Last {side} center: N/A"
-                : $"| Last {strSide} center: {center.Bottom:N8} -> {center.Ceiling:N8} %ΔB {PercentChanged(center?.Bottom ?? 0m, real.Bottom):N2} %ΔC {PercentChanged(center?.Ceiling ?? 0m, real.Ceiling):N2} [{directionIndicator:N5}]";
+                : $"| Last {strSide} center: {center.Bottom:N8} -> {center.Resistance[0].Level:N8} %ΔB {PercentChanged(center?.Bottom ?? 0m, real.Bottom):N2} %ΔC {PercentChanged(center?.Resistance[0].Level ?? 0m, real.Resistance[0].Level):N2} [{directionIndicator:N5}]";
         }
 
         public void Box(params string[] lines)

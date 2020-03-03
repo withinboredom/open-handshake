@@ -135,7 +135,7 @@ namespace Bot
             _logger.LogInformation($"Setting sell priority {_sellHeavy}");
 
             var percentBottom = Math.Abs(Lines.PercentChanged(_sellPoint?.Bottom ?? 0, e.New.Bottom));
-            var percentTop = Math.Abs(Lines.PercentChanged(_sellPoint?.Ceiling ?? 0, e.New.Ceiling));
+            var percentTop = Math.Abs(Lines.PercentChanged(_sellPoint?.Resistance[0].Level ?? 0, e.New.Resistance[0].Level));
 
             if (percentBottom <= _config.SellBottomChange && percentTop <= _config.SellTopChange) return;
 
@@ -199,7 +199,7 @@ namespace Bot
             _logger.LogInformation($"Setting buy priority {_buyHeavy}");
 
             var percentBottom = Math.Abs(Lines.PercentChanged(_buyPoint?.Bottom ?? 0, e.New.Bottom));
-            var percentTop = Math.Abs(Lines.PercentChanged(_buyPoint?.Ceiling ?? 0, e.New.Ceiling));
+            var percentTop = Math.Abs(Lines.PercentChanged(_buyPoint?.Resistance[0].Level ?? 0, e.New.Resistance[0].Level));
 
             if (percentBottom <= _config.SellBottomChange && percentTop <= _config.SellTopChange) return;
 
@@ -242,7 +242,7 @@ namespace Bot
         public async Task Reset()
         {
             _logger.LogCritical("Starting!");
-            Console.SetCursorPosition(0, _config.NumberOrders * 2 + 1 /*header*/ + 1 /*center*/ + 9 /*box*/);
+            Console.SetCursorPosition(0, _config.NumberOrders * 2 + 1 /*header*/ + 1 /*center*/ + 10 /*box*/);
             _logs.Render();
 
             Console.SetCursorPosition(0, 0);
@@ -294,10 +294,24 @@ namespace Bot
                     return Task.CompletedTask;
                 case { } c when c == Command.PriorityUpdate:
                 case { } x when x == Command.DelayedUpdate && _now >= _buyTime:
+                    var buyingPoint = _center.BuyResistanceLife.Select(x =>
+                    {
+                        var predict = x.Value.Predict();
+                        var time = predict.PredictY(0);
+                        return (x.Key, Time: time > _now ? time : DateTime.MaxValue);
+                    }).OrderBy(x => x.Time).First();
+
+                    var index = 0;
+
+                    if(buyingPoint.Time != DateTime.MaxValue)
+                    {
+                        index = _center.BuySide.Resistance.FindIndex(x => x.Level == buyingPoint.Key);
+                    }
+
                     _buyPoint = _center.BuySide;
                     _buyCommand = Command.None;
                     return _account.Btc.Total > _config.BtcZero
-                        ? UpdateSpread(_buyPoint, _buyHeavy, _buys)
+                        ? UpdateSpread(_buyPoint, _buyHeavy, _buys, index)
                         : Task.CompletedTask;
             }
         }
@@ -313,17 +327,31 @@ namespace Bot
                     return Task.CompletedTask;
                 case { } c when c == Command.PriorityUpdate:
                 case { } x when x == Command.DelayedUpdate && _now >= _sellTime:
+                    var sellingPoint = _center.SellResistanceLife.Select(x =>
+                    {
+                        var predict = x.Value.Predict();
+                        var time = predict.PredictY(0);
+                        return (x.Key, Time: time > _now ? time : DateTime.MaxValue);
+                    }).OrderBy(x => x.Time).First();
+
+                    var sellIndex = 0;
+
+                    if(sellingPoint.Time != DateTime.MaxValue)
+                    {
+                        sellIndex = _center.SellSide.Resistance.FindIndex(x => x.Level == sellingPoint.Key);
+                    }
+
                     _sellPoint = _center.SellSide;
                     _sellCommand = Command.None;
                     return _account.Hns.Total > _config.HnsZero
-                        ? UpdateSpread(_sellPoint, _sellHeavy, _sells)
+                        ? UpdateSpread(_sellPoint, _sellHeavy, _sells, sellIndex)
                         : Task.CompletedTask;
             }
         }
 
-        private async Task UpdateSpread(CeilingData ceiling, Client.Heavy heavy, List<ObservableOrder> orders)
+        private async Task UpdateSpread(CeilingData ceiling, Client.Heavy heavy, List<ObservableOrder> orders, int resistanceIndex)
         {
-            var spread = Math.Abs(ceiling.Ceiling - ceiling.Bottom) / _config.NumberOrders;
+            var spread = Math.Abs(ceiling.Resistance[resistanceIndex].Level - ceiling.Bottom) / _config.NumberOrders;
             if (spread == 0m) return;
 
             if (orders.Count < _config.NumberOrders)
@@ -364,7 +392,7 @@ namespace Bot
                         break;
                 }
 
-                var price = (ceiling.Ceiling - ceiling.Bottom) / _config.NumberOrders;
+                var price = (ceiling.Resistance[resistanceIndex].Level - ceiling.Bottom) / _config.NumberOrders;
                 price = ceiling.Bottom + (orders == _sells ? 1m : -1m) * _config.MinDistanceFromCenter + price * i;
 
                 if (Math.Abs(price - ceiling.Bottom) < _config.MinDistanceFromCenter)
@@ -428,7 +456,7 @@ namespace Bot
         private async Task<List<Order>> CreateSpread(CeilingData ceiling, Client.Heavy heavy,
             List<ObservableOrder> orders)
         {
-            var spread = Math.Abs(ceiling.Ceiling - ceiling.Bottom) / _config.NumberOrders;
+            var spread = Math.Abs(ceiling.Resistance[0].Level - ceiling.Bottom) / _config.NumberOrders;
             if (spread == 0m) return new List<Order>();
 
             var numberOrdersToCreate = _config.NumberOrders - orders.Count;
@@ -457,7 +485,7 @@ namespace Bot
                         break;
                 }
 
-                var price = (ceiling.Ceiling - ceiling.Bottom) / _config.NumberOrders;
+                var price = (ceiling.Resistance[0].Level - ceiling.Bottom) / _config.NumberOrders;
                 price = ceiling.Bottom + (orders == _sells ? 1m : -1m) * _config.MinDistanceFromCenter + price * i;
 
                 if (Math.Abs(price - ceiling.Bottom) < _config.MinDistanceFromCenter)
@@ -496,7 +524,7 @@ namespace Bot
 
             if(!File.Exists("balances.csv"))
             {
-                await File.WriteAllLinesAsync("balances.csv", new string[] {"time,hns,btc,btc value,total"});
+                await File.WriteAllLinesAsync("balances.csv", new string[] {"time,hns,btc,btc value,total,btc conversion rate"});
             }
 
             var minOrder = (await _client.GetExistingOrders()).Max(x => x.OrderId);
@@ -514,7 +542,7 @@ namespace Bot
                 await File.AppendAllLinesAsync("balances.csv",
                     new[]
                     {
-                        $"{_now.ToUniversalTime()},{_account.Hns.Total},{_account.Btc.Total},{Client.ConvertBtcToHns(_account.Btc.Total, _center.SellSide.Bottom)},{Client.ConvertBtcToHns(_account.Btc.Total, _center.SellSide.Bottom) + _account.Hns.Total}"
+                        $"{_now.ToUniversalTime()},{_account.Hns.Total},{_account.Btc.Total},{Client.ConvertBtcToHns(_account.Btc.Total, _center.BuySide.Bottom)},{Client.ConvertBtcToHns(_account.Btc.Total, _center.BuySide.Bottom) + _account.Hns.Total},{_center.BuySide.Bottom}"
                     });
 
                 var lines = new Lines();
@@ -527,16 +555,22 @@ namespace Bot
                 balance.Hns.LatestValue = _account.Hns.Total;
                 balance.Btc.LatestValue = _account.Btc.Total;
 
+                var sellPredictor = _center.SellResistanceLife[_center.SellResistanceLife.Keys.Min()].Predict();
+                var buyPredictor = _center.BuyResistanceLife[_center.BuyResistanceLife.Keys.Max()].Predict();
+
+                var breaking = (Sell: sellPredictor.PredictY(0), Buy: buyPredictor.PredictY(0));
+                var btcToHns = _center.OrderBook.SellBtc(balance.Btc.LatestValue);
+                var hnsToBtc = _center.OrderBook.SellHns(balance.Hns.LatestValue); 
+
                 lines.Box(
-                    lines.CurrentBalanceLine(balance.Hns, "HNS"),
-                    lines.CurrentBalanceLine(balance.Btc, "BTC",
-                        Client.ConvertBtcToHns(balance.Btc.LatestValue, _center.SellSide.Bottom),
-                        Client.ConvertBtcToHns(balance.Btc.LatestValue, _center.SellSide.Bottom) +
-                        balance.Hns.LatestValue),
+                    lines.CurrentBalanceLine(balance.Hns, "HNS", hnsToBtc.Btc, hnsToBtc.Btc + balance.Btc.LatestValue) + $" brings to level: {hnsToBtc.ToLevel:N8}",
+                    lines.CurrentBalanceLine(balance.Btc, "BTC",btcToHns.Hns, btcToHns.Hns + balance.Hns.LatestValue) + $" brings to level: {btcToHns.ToLevel:N8}",
                     lines.CenterLine(_center.SellSide, _sellPoint, OrderSide.SELL, 0),
                     lines.CenterLine(_center.BuySide, _buyPoint, OrderSide.BUY, 0),
                     $"| Predict sell +5s: {_center.PredictSale(_now.AddSeconds(5)):N8} +10s {_center.PredictSale(_now.AddSeconds(10)):N8} +60s {_center.PredictSale(_now.AddMinutes(1)):N8}",
+                    $"| Passing resistance at {(breaking.Sell < DateTime.Now || breaking.Sell == DateTime.MaxValue ? "never" : breaking.Sell.ToString() )} strength: {_center.SellResistanceLife[_center.SellResistanceLife.Keys.Min()].LatestValue:N6}",
                     $"| Predict buy  +5s: {_center.PredictBuy(_now.AddSeconds(5)):N8} +10s {_center.PredictBuy(_now.AddSeconds(10)):N8} +60s {_center.PredictBuy(_now.AddMinutes(1)):N8}",
+                    $"| Passing resistance at {(breaking.Buy < DateTime.Now || breaking.Buy == DateTime.MaxValue ? "never" : breaking.Buy.ToString())} strength: {_center.BuyResistanceLife[_center.BuyResistanceLife.Keys.Min()].LatestValue:N6}",
                     $"| Commands: [buy - {_buyCommand}] [sell - {_sellCommand}]"
                 );
 
