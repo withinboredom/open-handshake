@@ -20,7 +20,7 @@ namespace Bot.NamebaseClient
         public Dictionary<decimal, TracableValue> SellResistanceLife;
 
         public OrderBook OrderBook;
-        
+
         public CeilingData BuySide;
         public Func<DateTime, decimal> PredictBuy;
 
@@ -71,7 +71,7 @@ namespace Bot.NamebaseClient
 
             foreach (var key in keysToRemove)
             {
-                SellResistanceLife.Remove(key);
+                lifetime.Remove(key);
             }
         }
 

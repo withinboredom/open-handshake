@@ -6,18 +6,21 @@ using Microsoft.Extensions.Logging;
 
 namespace Bot.NamebaseClient
 {
-    internal class ObservableOrder
+    public class ObservableOrder
     {
         public delegate void OrderStatusUpdateHandler(object sender, StatusUpdateEventArgs e);
 
         private readonly Client _client;
         private readonly ILogger _logger;
 
+        public bool IsDeleted { get; private set; }
+
         public ObservableOrder(Order order, Client client, ILogger logger)
         {
             RawOrder = order;
             _client = client;
             _logger = logger;
+            IsDeleted = false;
         }
 
         public decimal Quantity => RawOrder.OriginalQuantity;
@@ -46,20 +49,32 @@ namespace Bot.NamebaseClient
             var previous = RawOrder;
             _logger.LogInformation($"Cancelling order {RawOrder.OrderId}");
             await _client.CancelOrder(RawOrder.OrderId);
-            RawOrder = await _client.CreateOrder(new SendOrder
+
+            if (quantity > 0)
             {
-                Side = RawOrder.Side,
-                Price = price.ToString(),
-                Quantity = quantity.ToString(),
-                Type = RawOrder.Type
-            });
+                RawOrder = await _client.CreateOrder(
+                    new SendOrder
+                    {
+                        Side = RawOrder.Side,
+                        Price = price.ToString(),
+                        Quantity = quantity.ToString(),
+                        Type = RawOrder.Type
+                    });
+                _logger.LogInformation($"Created {RawOrder.OrderId}");
+                IsDeleted = false;
+            }
+            else
+            {
+                IsDeleted = true;
+                _logger.LogInformation("Deleted order");
+            }
+
             /*var handler = StatusChanged;
             handler?.Invoke(this, new StatusUpdateEventArgs
             {
                 NewStatus = _order.Status,
                 PreviousStatus = previous.Status
             });*/
-            _logger.LogInformation($"Created {RawOrder.OrderId}");
         }
 
         public class StatusUpdateEventArgs : EventArgs

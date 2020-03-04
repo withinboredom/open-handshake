@@ -75,7 +75,7 @@ namespace Bot.NamebaseClient
                         _logger.LogCritical("Updating clock drift!");
                         throw new ErrorResponse.TimeChanged();
                     case ErrorResponse.SuggestedRecovery.Fatal:
-                        _logger.LogCritical("Fatal error!");
+                        _logger.LogCritical($"Fatal error: {error.Message} | {error.Code}");
                         throw new ErrorResponse.FatalError();
                     case ErrorResponse.SuggestedRecovery.Ignore:
                         _logger.LogCritical("Ignoring error!");

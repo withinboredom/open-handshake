@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
+using System.Security.Cryptography.X509Certificates;
 
 namespace Bot
 {
@@ -59,6 +60,69 @@ namespace Bot
                     Value = value.Value
                 });
             }
+        }
+
+        public static decimal StdDeviation(IEnumerable<decimal> data, decimal mean)
+        {
+            var sumOfSquares = data.Select(x => (x - mean) * (x - mean)).Sum();
+            return (decimal) Math.Sqrt((double) sumOfSquares / (data.Count() - 1));
+        }
+
+        public (int Signal, decimal Slope) Signal(int lag, decimal threshold, decimal influence)
+        {
+            var input = _values.ToList();
+
+            if (input.Count < lag) return (0, 0);
+
+            var signals = new int[input.Count];
+            var filteredY = input.Select(x => x.Value).ToArray();
+            var avgFilter = new decimal[input.Count];
+            var stdFilter = new decimal[input.Count];
+
+            var initialWindow = new List<decimal>(filteredY).Skip(0).Take(lag).ToList();
+            avgFilter[lag - 1] = initialWindow.Average();
+            stdFilter[lag - 1] = StdDeviation(initialWindow, initialWindow.Average());
+
+            for (var i = lag; i < input.Count; i++)
+            {
+                if (Math.Abs(input[i].Value - avgFilter[i - 1]) > threshold * stdFilter[i - 1])
+                {
+                    signals[i] = (input[i].Value > avgFilter[i - 1]) ? 1 : -1;
+                    filteredY[i] = influence * input[i].Value + (1 - influence) * filteredY[i - 1];
+                }
+                else
+                {
+                    signals[i] = 0;
+                    filteredY[i] = input[i].Value;
+                }
+
+                var slidingWindow = new List<decimal>(filteredY).Skip(i - lag).Take(lag + 1).ToList();
+
+                var tmpMean = slidingWindow.Average();
+                var tmpStdDev = StdDeviation(slidingWindow, tmpMean);
+
+                avgFilter[i] = tmpMean;
+                stdFilter[i] = tmpStdDev;
+            }
+
+            var sumCodviates = 0m;
+            var sumOf = (X: 0m, Y: 0m);
+            var sumOfSqr = (X: 0m, Y: 0m);
+            for (var i = 0; i < avgFilter.Length; i++)
+            {
+                var x = i;
+                var y = avgFilter[i];
+                sumCodviates += x * y;
+                sumOf.X += x;
+                sumOf.Y += y;
+                sumOfSqr.X += x * x;
+                sumOfSqr.Y += y * y;
+            }
+
+            var sCo = sumCodviates - sumOf.X * sumOf.Y / (decimal) avgFilter.Length;
+            var ss = (X: sumOfSqr.X - sumOf.X * sumOf.X / (decimal) avgFilter.Length, Y: 0);
+
+            return (signals.Last(), sCo / ss.X);
         }
 
         public (decimal Slope, Func<DateTime, decimal> PredictX, Func<decimal, DateTime> PredictY) Predict()

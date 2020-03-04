@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using Bot.Brains;
 using Bot.NamebaseClient;
 using Bot.NamebaseClient.Requests;
 using Bot.NamebaseClient.Responses;
@@ -12,32 +13,92 @@ using Microsoft.Extensions.Logging;
 
 namespace Bot
 {
+    /// <summary>
+    /// A trading bot
+    /// </summary>
     public class TradingBot
     {
+        /// <summary>
+        /// The account
+        /// </summary>
         private readonly ObservableAccount _account;
-        private readonly List<ObservableOrder> _buys;
-        private readonly ObservableCenterPoint _center;
-        private readonly Client _client;
-        public Configuration _config { get; set; }
-        private readonly ILogger _logger;
-        private readonly List<ObservableOrder> _sells;
-        private readonly ConsoleBox _logs = new ConsoleBox("Logs");
-        private Client.Heavy _buyHeavy;
-        private CeilingData? _buyPoint;
-        private DateTime _buyTime;
-        private DateTime _now;
-        private Client.Heavy _sellHeavy;
-        private CeilingData? _sellPoint;
-        private DateTime _sellTime;
-        private Command _buyCommand, _sellCommand;
 
-        private enum Command
+        /// <summary>
+        /// The buys
+        /// </summary>
+        private readonly List<ObservableOrder> _buys;
+
+        /// <summary>
+        /// The center
+        /// </summary>
+        private readonly ObservableCenterPoint _center;
+
+        /// <summary>
+        /// The client
+        /// </summary>
+        private readonly Client _client;
+
+        /// <summary>
+        /// Gets or sets the configuration.
+        /// </summary>
+        /// <value>
+        /// The configuration.
+        /// </value>
+        public Configuration _config { get; set; }
+
+        /// <summary>
+        /// The logger
+        /// </summary>
+        private readonly ILogger _logger;
+
+        /// <summary>
+        /// The sells
+        /// </summary>
+        private readonly List<ObservableOrder> _sells;
+
+        /// <summary>
+        /// The logs
+        /// </summary>
+        private readonly ConsoleBox _logs = new ConsoleBox("Logs");
+
+        /// <summary>
+        /// The state box
+        /// </summary>
+        private readonly ConsoleBox _stateBox = new ConsoleBox("Bot Status");
+
+        /// <summary>
+        /// The brain
+        /// </summary>
+        private IBrain _brain;
+
+        /// <summary>
+        /// Available commands to the bot
+        /// </summary>
+        public enum Command
         {
             None,
             PriorityUpdate,
-            DelayedUpdate
+            DelayedUpdate,
         }
 
+        /// <summary>
+        /// The type of trend detected
+        /// </summary>
+        public enum Trend
+        {
+            Random,
+            Up,
+            Down,
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="TradingBot"/> class.
+        /// </summary>
+        /// <param name="client">The client.</param>
+        /// <param name="account">The account.</param>
+        /// <param name="center">The center.</param>
+        /// <param name="config">The configuration.</param>
+        /// <param name="logger">The logger.</param>
         private TradingBot(Client client, ObservableAccount account, ObservableCenterPoint center, Configuration config, ILogger logger)
         {
             _client = client;
@@ -51,17 +112,27 @@ namespace Bot
             _center.SellCeilingChanged += CenterOnSellCeilingChanged;
             _buys = new List<ObservableOrder>(_config.NumberOrders);
             _sells = new List<ObservableOrder>(_config.NumberOrders);
-            _sellHeavy = Client.Heavy.None;
-            _buyHeavy = Client.Heavy.None;
-            _buyTime = DateTime.Now;
-            _sellTime = DateTime.Now;
-            _now = DateTime.Now;
-            _logs.MaxLines = 10;
+            //_brain = new GridBrain(client, account, center, config, logger, CreateOrder, _sells, _buys);
+            _brain = new GridBrain(client, account, center, config, logger, CreateOrder, _sells, _buys);
+            _brain.Now = DateTime.Now;
 
-            ListLogger.Stream.CollectionChanged += StreamOnCollectionChanged;
+            ListLogger.Stream.CollectionChanged += OnNewLogs;
         }
 
-        private void StreamOnCollectionChanged(object sender, NotifyCollectionChangedEventArgs e)
+        private async Task CreateOrder(SendOrder sendOrder, List<ObservableOrder> orders)
+        {
+            var order = await _client.CreateOrder(sendOrder);
+            var observableOrder = new ObservableOrder(order, _client, _logger);
+            observableOrder.StatusChanged += OrderOnStatusChanged;
+            orders.Add(observableOrder);
+        }
+
+        /// <summary>
+        /// Streams the on collection changed.
+        /// </summary>
+        /// <param name="sender">The sender.</param>
+        /// <param name="e">The <see cref="NotifyCollectionChangedEventArgs"/> instance containing the event data.</param>
+        private void OnNewLogs(object sender, NotifyCollectionChangedEventArgs e)
         {
             switch(e.Action)
             {
@@ -93,120 +164,35 @@ namespace Bot
             }
         }
 
+        /// <summary>
+        /// Centers the on sell ceiling changed.
+        /// </summary>
+        /// <param name="sender">The sender.</param>
+        /// <param name="e">The <see cref="ObservableCenterPoint.CeilingChangedEventArgs"/> instance containing the event data.</param>
         private void CenterOnSellCeilingChanged(object sender, ObservableCenterPoint.CeilingChangedEventArgs e)
         {
-            _logger.LogInformation("Detected sell side ceiling change");
-            var prediction = _center.PredictSale(DateTime.Now.AddSeconds(5));
-
-            var currentValueHns = (_account.Hns.Total - _config.HnsZero) /
-                                  Client.ConvertBtcToHns(_account.Btc.Total - _config.BtcZero, _center.SellSide.Bottom);
-
-            if (_config.HnsRatio > 0)
-            {
-                if (currentValueHns < _config.HnsRatio)
-                {
-                    if (_sellHeavy != Client.Heavy.Bottom)
-                    {
-                        (_sellTime, _sellCommand) = SetTime(_sellTime, _now.AddMinutes(5));
-                    }
-
-                    _sellHeavy = Client.Heavy.Bottom;
-                }
-                else if (currentValueHns > _config.HnsRatio)
-                {
-                    if (_sellHeavy != Client.Heavy.Top)
-                    {
-                        (_sellTime, _sellCommand) = SetTime(_sellTime, _now.AddMinutes(5));
-                    }
-
-                    _sellHeavy = Client.Heavy.Top;
-                }
-                else
-                {
-                    if (_sellHeavy != Client.Heavy.None)
-                    {
-                        (_sellTime, _sellCommand) = SetTime(_sellTime, _now.AddMinutes(5));
-                    }
-
-                    _sellHeavy = Client.Heavy.None;
-                }
-            }
-
-            _logger.LogInformation($"Setting sell priority {_sellHeavy}");
-
-            var percentBottom = Math.Abs(Lines.PercentChanged(_sellPoint?.Bottom ?? 0, e.New.Bottom));
-            var percentTop = Math.Abs(Lines.PercentChanged(_sellPoint?.Resistance[0].Level ?? 0, e.New.Resistance[0].Level));
-
-            if (percentBottom <= _config.SellBottomChange && percentTop <= _config.SellTopChange) return;
-
-            _logger.LogInformation($"Major change detected, recalculating sell side order book");
-
-            (_sellTime, _sellCommand) = SetTime(_sellTime, _now);
+            if(_spikeSignal.LatestValue == 0)
+                _brain.SellCeilingChanged(sender as ObservableCenterPoint, e);
         }
 
-        private (DateTime, Command) SetTime(DateTime other, DateTime? set = null)
-        {
-            if (set == null) set = _now;
-
-            if (set <= _now)
-            {
-                return (set.Value, Command.PriorityUpdate);
-            }
-
-            return (other > set.Value ? other : set.Value, Command.DelayedUpdate);
-        }
-
+        /// <summary>
+        /// Centers the on buy ceiling changed.
+        /// </summary>
+        /// <param name="sender">The sender.</param>
+        /// <param name="e">The <see cref="ObservableCenterPoint.CeilingChangedEventArgs"/> instance containing the event data.</param>
         private void CenterOnBuyCeilingChanged(object sender, ObservableCenterPoint.CeilingChangedEventArgs e)
         {
-            _logger.LogInformation("Detected buy side ceiling change");
-            var prediction = _center.PredictBuy(DateTime.Now.AddSeconds(5));
-            
-            // todo: use prediction
-            var curentValueBtc = Client.ConvertBtcToHns(_account.Btc.Total - _config.BtcZero, _center.SellSide.Bottom) /
-                                 (_account.Hns.Total - _config.HnsZero);
-
-            if (_config.BtcRatio > 0)
-            {
-                if (curentValueBtc < _config.BtcRatio)
-                {
-                    if (_buyHeavy != Client.Heavy.Bottom)
-                    {
-                        (_buyTime, _buyCommand) = SetTime(_buyTime, _now.AddMinutes(5));
-                    }
-
-                    _buyHeavy = Client.Heavy.Bottom;
-                }
-                else if (curentValueBtc > _config.BtcRatio)
-                {
-                    if (_buyHeavy != Client.Heavy.Top)
-                    {
-                        (_buyTime, _buyCommand) = SetTime(_buyTime, _now.AddMinutes(5));
-                    }
-
-                    _buyHeavy = Client.Heavy.Top;
-                }
-                else
-                {
-                    if (_buyHeavy != Client.Heavy.None)
-                    {
-                        (_buyTime, _buyCommand) = SetTime(_buyTime, _now.AddMinutes(5));
-                    }
-
-                    _buyHeavy = Client.Heavy.None;
-                }
-            }
-
-            _logger.LogInformation($"Setting buy priority {_buyHeavy}");
-
-            var percentBottom = Math.Abs(Lines.PercentChanged(_buyPoint?.Bottom ?? 0, e.New.Bottom));
-            var percentTop = Math.Abs(Lines.PercentChanged(_buyPoint?.Resistance[0].Level ?? 0, e.New.Resistance[0].Level));
-
-            if (percentBottom <= _config.SellBottomChange && percentTop <= _config.SellTopChange) return;
-
-            (_buyTime, _buyCommand) = SetTime(_buyTime, _now);
-            _logger.LogInformation($"Major change detected, recalculating buy side order book");
+            if(_spikeSignal.LatestValue == 0)
+                _brain.BuyCeilingChanged(sender as ObservableCenterPoint, e);
         }
 
+        /// <summary>
+        /// Creates the instance.
+        /// </summary>
+        /// <param name="client">The client.</param>
+        /// <param name="config">The configuration.</param>
+        /// <param name="logger">The logger.</param>
+        /// <returns></returns>
         public static async Task<TradingBot> CreateInstance(Client client, Configuration config, ILogger logger)
         {
             Console.Write("Initializing bot, please wait...");
@@ -218,27 +204,29 @@ namespace Bot
             return bot;
         }
 
+        /// <summary>
+        /// Triggers an update when the balance changes
+        /// </summary>
+        /// <param name="sender">The sender.</param>
+        /// <param name="e">The <see cref="ObservableAccount.BalanceUpdatedEventArgs"/> instance containing the event data.</param>
         private void AccountOnBtcUpdated(object sender, ObservableAccount.BalanceUpdatedEventArgs e)
         {
-            if(Lines.PercentChanged(e.PreviousAmount, e.NewAmount) > 0.15m)
-            {
-                (_buyTime, _buyCommand) = SetTime(_buyTime, _now.AddSeconds(30));
-            }
-            _logger.LogInformation($"Detected change in BTC: {e.NewAmount - e.PreviousAmount:N8}");
+            _brain.BtcUpdated(sender as ObservableAccount, e);
         }
 
+        /// <summary>
+        /// Accounts the on HNS updated.
+        /// </summary>
+        /// <param name="sender">The sender.</param>
+        /// <param name="e">The <see cref="ObservableAccount.BalanceUpdatedEventArgs"/> instance containing the event data.</param>
         private void AccountOnHnsUpdated(object sender, ObservableAccount.BalanceUpdatedEventArgs e)
         {
-            if (Lines.PercentChanged(e.PreviousAmount, e.NewAmount) > 0.15m)
-            {
-                (_sellTime, _sellCommand) = SetTime(_sellTime, _now.AddSeconds(30));
-            }
-            _logger.LogInformation($"Detected change in HNS: {e.NewAmount - e.PreviousAmount:N6}");
+            _brain.HnsUpdated(sender as ObservableAccount, e);
         }
 
-        /**
-         * Cancels all open orders and reconciles internal state
-         */
+        /// <summary>
+        /// Resets this instance.
+        /// </summary>
         public async Task Reset()
         {
             _logger.LogCritical("Starting!");
@@ -267,250 +255,48 @@ namespace Bot
             Console.WriteLine("Done!");
         }
 
-        private bool AlreadyUpdating;
-
-        public async Task MaybeUpdate()
-        {
-            if (!AlreadyUpdating)
-            {
-                AlreadyUpdating = true;
-                await Task.WhenAll(CreateBuySide(), CreateSellSide());
-                AlreadyUpdating = false;
-            } else
-            {
-                _logger.LogWarning("Detected an update while already updating, maybe you have your update period set too low?");
-                _logger.LogWarning("This is normal while starting up or creating a bunch of orders.");
-            }
-        }
-
-        public Task CreateBuySide()
-        {
-            _logger.LogInformation($"Evaluating buy command: {_buyCommand} with scheduled execution at {_buyTime}");
-            switch (_buyCommand)
-            {
-                default:
-                case { } c when c == Command.None:
-                case { } x when x == Command.DelayedUpdate && _now < _buyTime:
-                    return Task.CompletedTask;
-                case { } c when c == Command.PriorityUpdate:
-                case { } x when x == Command.DelayedUpdate && _now >= _buyTime:
-                    var buyingPoint = _center.BuyResistanceLife.Select(x =>
-                    {
-                        var predict = x.Value.Predict();
-                        var time = predict.PredictY(0);
-                        return (x.Key, Time: time > _now ? time : DateTime.MaxValue);
-                    }).OrderBy(x => x.Time).First();
-
-                    var index = 0;
-
-                    if(buyingPoint.Time != DateTime.MaxValue)
-                    {
-                        index = _center.BuySide.Resistance.FindIndex(x => x.Level == buyingPoint.Key);
-                    }
-
-                    _buyPoint = _center.BuySide;
-                    _buyCommand = Command.None;
-                    return _account.Btc.Total > _config.BtcZero
-                        ? UpdateSpread(_buyPoint, _buyHeavy, _buys, index)
-                        : Task.CompletedTask;
-            }
-        }
-
-        public Task CreateSellSide()
-        {
-            _logger.LogInformation($"Evaluating buy command: {_sellCommand} with scheduled execution at {_sellTime}");
-            switch (_sellCommand)
-            {
-                default:
-                case { } c when c == Command.None:
-                case { } x when x == Command.DelayedUpdate && _now < _sellTime:
-                    return Task.CompletedTask;
-                case { } c when c == Command.PriorityUpdate:
-                case { } x when x == Command.DelayedUpdate && _now >= _sellTime:
-                    var sellingPoint = _center.SellResistanceLife.Select(x =>
-                    {
-                        var predict = x.Value.Predict();
-                        var time = predict.PredictY(0);
-                        return (x.Key, Time: time > _now ? time : DateTime.MaxValue);
-                    }).OrderBy(x => x.Time).First();
-
-                    var sellIndex = 0;
-
-                    if(sellingPoint.Time != DateTime.MaxValue)
-                    {
-                        sellIndex = _center.SellSide.Resistance.FindIndex(x => x.Level == sellingPoint.Key);
-                    }
-
-                    _sellPoint = _center.SellSide;
-                    _sellCommand = Command.None;
-                    return _account.Hns.Total > _config.HnsZero
-                        ? UpdateSpread(_sellPoint, _sellHeavy, _sells, sellIndex)
-                        : Task.CompletedTask;
-            }
-        }
-
-        private async Task UpdateSpread(CeilingData ceiling, Client.Heavy heavy, List<ObservableOrder> orders, int resistanceIndex)
-        {
-            var spread = Math.Abs(ceiling.Resistance[resistanceIndex].Level - ceiling.Bottom) / _config.NumberOrders;
-            if (spread == 0m) return;
-
-            if (orders.Count < _config.NumberOrders)
-            {
-                var newOrders = await CreateSpread(ceiling, heavy, orders);
-                orders.AddRange(newOrders.Select(order =>
-                {
-                    var o = new ObservableOrder(order, _client, _logger);
-                    o.StatusChanged += OrderOnStatusChanged;
-                    return o;
-                }));
-                return;
-            } else if(orders.Count > _config.NumberOrders)
-            {
-                _logger.LogError("Extra orders detected!");
-            }
-
-            var pendingUpdates = new List<(decimal Price, decimal Quantity)>();
-
-            var balance = orders == _sells
-                ? _account.Hns.Total - _config.HnsZero
-                : _account.Btc.Total - _config.BtcZero;
-            balance *= orders == _sells ? _config.HnsRisk : _config.BtcRisk;
-
-            for (var i = 0; i < _config.NumberOrders; i++)
-            {
-                var bid = 0m;
-                switch (heavy)
-                {
-                    case Client.Heavy.None:
-                        bid = balance / _config.NumberOrders;
-                        break;
-                    case Client.Heavy.Bottom:
-                        bid = (0.1m * i + 1m) / 55 * balance;
-                        break;
-                    case Client.Heavy.Top:
-                        bid = (0.1m * (_config.NumberOrders - i) + 1m) / 55m * balance;
-                        break;
-                }
-
-                var price = (ceiling.Resistance[resistanceIndex].Level - ceiling.Bottom) / _config.NumberOrders;
-                price = ceiling.Bottom + (orders == _sells ? 1m : -1m) * _config.MinDistanceFromCenter + price * i;
-
-                if (Math.Abs(price - ceiling.Bottom) < _config.MinDistanceFromCenter)
-                    price = orders == _sells
-                        ? price + _config.MinDistanceFromCenter
-                        : price - _config.MinDistanceFromCenter;
-
-                if (orders == _buys) bid = Client.ConvertBtcToHns(bid, price);
-
-                pendingUpdates.Add((price, bid));
-            }
-
-            var tasks = pendingUpdates.Select((x, index) =>
-            {
-                if (orders.Count <= index) return Task.CompletedTask;
-
-                if (orders[index].Price != x.Price || orders[index].Quantity != x.Quantity)
-                    return orders[index].Update(x.Quantity, x.Price);
-
-                return Task.CompletedTask;
-            });
-
-            _logger.LogWarning($"{pendingUpdates.Count} updates!");
-
-            await Task.WhenAll(tasks);
-        }
-
+        /// <summary>
+        /// Orders the on status changed.
+        /// </summary>
+        /// <param name="sender">The sender.</param>
+        /// <param name="e">The <see cref="Bot.NamebaseClient.ObservableOrder.StatusUpdateEventArgs" /> instance containing the event data.</param>
         private void OrderOnStatusChanged(object sender, ObservableOrder.StatusUpdateEventArgs e)
         {
-             _logger.LogInformation($"Detected order status change from {e.PreviousStatus} to {e.NewStatus}");
-
-            switch (e.NewStatus)
-            {
-                case OrderStatus.FILLED:
-                case OrderStatus.CLOSED:
-                    if (_sells.Contains(sender))
-                    {
-                        (_sellTime, _sellCommand) = SetTime(_sellTime, _now.AddSeconds(30));
-                    }
-                    else if (_buys.Contains(sender))
-                    {
-                        (_buyTime, _buyCommand) = SetTime(_buyTime, _now.AddSeconds(30));
-                    }
-
-                    break;
-                case OrderStatus.PARTIALLY_FILLED:
-                    if(_sells.Contains(sender) && _sellCommand == Command.DelayedUpdate)
-                    {
-                        (_sellTime, _sellCommand) = SetTime(_sellTime, _now.AddSeconds(30));
-                    } else if(_buys.Contains(sender) && _buyCommand == Command.DelayedUpdate)
-                    {
-                        (_buyTime, _buyCommand) = SetTime(_buyTime, _now.AddSeconds(30));
-                    }
-
-                    break;
-                default:
-                    return;
-            }
+            _brain.OrderStatusChanged(sender as ObservableOrder, e);
         }
 
-        private async Task<List<Order>> CreateSpread(CeilingData ceiling, Client.Heavy heavy,
-            List<ObservableOrder> orders)
+        private Trend _trend = Trend.Random;
+        private TracableValue _midpoint = new TracableValue(600);
+        private TracableValue _acceleration = new TracableValue(600);
+        private TracableValue _spikeSignal = new TracableValue(600);
+
+        private void DetectTrend()
         {
-            var spread = Math.Abs(ceiling.Resistance[0].Level - ceiling.Bottom) / _config.NumberOrders;
-            if (spread == 0m) return new List<Order>();
+            _midpoint.LatestValue = (((_center.SellSide.Bottom - _center.BuySide.Bottom) / 2m) + _center.BuySide.Bottom) * 1000000000000m;
+            //var (slope, _, _) = _midpoint.Predict();
+            //_acceleration.LatestValue = slope;
 
-            var numberOrdersToCreate = _config.NumberOrders - orders.Count;
-            if (numberOrdersToCreate <= 0) return new List<Order>();
+            //(slope, _, _) = _acceleration.Predict();
+            (_spikeSignal.LatestValue, _acceleration.LatestValue) = _midpoint.Signal(30, 4.5m, 0.1m);
 
-            var balance = orders == _sells
-                ? _account.Hns.Total - _config.HnsZero
-                : _account.Btc.Total - _config.BtcZero;
-            balance *= orders == _sells ? _config.HnsRisk : _config.BtcRisk;
-
-            var operations = new List<Task<Order>>();
-
-            for (var i = 0; i < numberOrdersToCreate; i++)
+            if (_acceleration.LatestValue > 0)
             {
-                var bid = 0m;
-                switch (heavy)
-                {
-                    case Client.Heavy.None:
-                        bid = balance / _config.NumberOrders;
-                        break;
-                    case Client.Heavy.Bottom:
-                        bid = (0.1m * i + 1m) / 55 * balance;
-                        break;
-                    case Client.Heavy.Top:
-                        bid = (0.1m * (_config.NumberOrders - i) + 1m) / 55m * balance;
-                        break;
-                }
-
-                var price = (ceiling.Resistance[0].Level - ceiling.Bottom) / _config.NumberOrders;
-                price = ceiling.Bottom + (orders == _sells ? 1m : -1m) * _config.MinDistanceFromCenter + price * i;
-
-                if (Math.Abs(price - ceiling.Bottom) < _config.MinDistanceFromCenter)
-                    price = orders == _sells
-                        ? price + _config.MinDistanceFromCenter
-                        : price - _config.MinDistanceFromCenter;
-
-                if (orders == _buys) bid = Client.ConvertBtcToHns(bid, price);
-
-                var order = new SendOrder
-                {
-                    Price = price.ToString(),
-                    Side = orders == _sells ? OrderSide.SELL : OrderSide.BUY,
-                    Quantity = bid.ToString(),
-                    Timestamp = DateTime.UtcNow.ToUnixTime(),
-                    Type = OrderType.LMT
-                };
-
-                operations.Add(_client.CreateOrder(order));
-                _logger.LogInformation($"{(orders == _sells ? "Sell" : "Buy")} order placed for {price} at {bid:F8}");
+                _trend = Trend.Up;
             }
-
-            return (await Task.WhenAll(operations)).ToList();
+            else if (_acceleration.LatestValue < 0)
+            {
+                _trend = Trend.Down;
+            }
+            else
+            {
+                _trend = Trend.Random;
+            }
         }
 
+        /// <summary>
+        /// Displays this instance.
+        /// </summary>
+        /// <returns></returns>
         public async Task Display()
         {
             var balance = new
@@ -519,38 +305,60 @@ namespace Bot
                 Hns = new TrackableValue()
             };
 
-            _sellCommand = _buyCommand = Command.PriorityUpdate;
+            _brain.ExecutingSellCommand = _brain.ExecutingBuyCommand = Command.PriorityUpdate;
             Console.OutputEncoding = Encoding.UTF8;
 
-            if(!File.Exists("balances.csv"))
+            if (!File.Exists("balances.csv"))
             {
-                await File.WriteAllLinesAsync("balances.csv", new string[] {"time,hns,btc,btc value,total,btc conversion rate"});
+                await File.WriteAllLinesAsync("balances.csv", new string[] { "time,hns,btc,btc value,total,btc conversion rate" });
             }
 
-            var minOrder = (await _client.GetExistingOrders()).Max(x => x.OrderId);
+            _logs.Top = _config.NumberOrders * 2 + 1 /*header*/ + 1 /*center*/ + 11;
+            _stateBox.Top = _config.NumberOrders * 2 + 2;
+            _stateBox.MaxLines = 11;
+            _stateBox.Render();
 
             while (true)
             {
-                _now = DateTime.Now;
-                //var orders = await _client.GetExistingOrders(filter: (order =>
-                //    order.Status == OrderStatus.PARTIALLY_FILLED || order.Status == OrderStatus.NEW), minOrderId: minOrder);
+                Console.ForegroundColor = Console.BackgroundColor == ConsoleColor.Black
+                    ? ConsoleColor.White
+                    : ConsoleColor.Black;
+                _brain.Now = DateTime.Now;
+                DetectTrend();
+
+                if (_trend == Trend.Random && !(_brain is GridBrain))
+                {
+                    _brain = new GridBrain(_client, _account, _center, _config, _logger, CreateOrder, _sells, _buys);
+                    _brain.ExecutingSellCommand = Command.PriorityUpdate;
+                    _brain.ExecutingBuyCommand = Command.PriorityUpdate;
+                }
+                else if (_trend == Trend.Up && !(_brain is TrendingUp))
+                {
+                    _brain = new TrendingUp(_client, _account, _center, _config, _logger, CreateOrder, _sells, _buys);
+                    _brain.ExecutingSellCommand = Command.PriorityUpdate;
+                    _brain.ExecutingBuyCommand = Command.PriorityUpdate;
+                }
+                else if (_trend == Trend.Down && !(_brain is GridBrain))
+                {
+                    _brain = new GridBrain(_client, _account, _center, _config, _logger, CreateOrder, _sells, _buys);
+                    _brain.ExecutingSellCommand = Command.PriorityUpdate;
+                    _brain.ExecutingBuyCommand = Command.PriorityUpdate;
+                }
+
                 await Task.WhenAll(_sells.Select(x => x.Update()).Concat(_buys.Select(x => x.Update()))
-                    .Concat(new[] {_center.Update(), _account.Update()}));
+                    .Concat(new[] { _center.Update(), _account.Update() }));
                 Console.SetCursorPosition(0, 0);
-                ConsoleBox.WriteLine($"{_now} local / {_now.ToUniversalTime()} UTC");
+                ConsoleBox.WriteLine($"{_brain.Now} local / {_brain.Now.ToUniversalTime()} UTC");
+
+                //var data = string.Join(',', _midpoint.Values.Select(x => x.Value.ToString()));
 
                 await File.AppendAllLinesAsync("balances.csv",
                     new[]
                     {
-                        $"{_now.ToUniversalTime()},{_account.Hns.Total},{_account.Btc.Total},{Client.ConvertBtcToHns(_account.Btc.Total, _center.BuySide.Bottom)},{Client.ConvertBtcToHns(_account.Btc.Total, _center.BuySide.Bottom) + _account.Hns.Total},{_center.BuySide.Bottom}"
+                        $"{_brain.Now.ToUniversalTime()},{_account.Hns.Total},{_account.Btc.Total},{Client.ConvertBtcToHns(_account.Btc.Total, _center.BuySide.Bottom)},{Client.ConvertBtcToHns(_account.Btc.Total, _center.BuySide.Bottom) + _account.Hns.Total},{_center.BuySide.Bottom}"
                     });
 
                 var lines = new Lines();
-                var predictBuy = _center.PredictBuy(_now.AddSeconds(60));
-                var predictSell = _center.PredictSale(_now.AddSeconds(60));
-                //lines.OrderChart(orders, _sellPoint, _buyPoint, predictSell, predictBuy);
-                var potentialBalance = lines.OrderChart(_sells.Concat(_buys).Select(x => x.RawOrder), _sellPoint,
-                    _buyPoint, predictSell, predictBuy);
 
                 balance.Hns.LatestValue = _account.Hns.Total;
                 balance.Btc.LatestValue = _account.Btc.Total;
@@ -560,25 +368,38 @@ namespace Bot
 
                 var breaking = (Sell: sellPredictor.PredictY(0), Buy: buyPredictor.PredictY(0));
                 var btcToHns = _center.OrderBook.SellBtc(balance.Btc.LatestValue);
-                var hnsToBtc = _center.OrderBook.SellHns(balance.Hns.LatestValue); 
+                var hnsToBtc = _center.OrderBook.SellHns(balance.Hns.LatestValue);
 
-                lines.Box(
+                lines.OrderChart(
+                    _buys.Concat(_sells),
+                    _brain.SellPoint,
+                    _brain.BuyPoint,
+                    _center.PredictSale(_brain.Now + TimeSpan.FromMinutes(1)),
+                    _center.PredictBuy(_brain.Now + TimeSpan.FromMinutes(1)));
+
+                var box = new [] {
                     lines.CurrentBalanceLine(balance.Hns, "HNS", hnsToBtc.Btc, hnsToBtc.Btc + balance.Btc.LatestValue) + $" brings to level: {hnsToBtc.ToLevel:N8}",
-                    lines.CurrentBalanceLine(balance.Btc, "BTC",btcToHns.Hns, btcToHns.Hns + balance.Hns.LatestValue) + $" brings to level: {btcToHns.ToLevel:N8}",
-                    lines.CenterLine(_center.SellSide, _sellPoint, OrderSide.SELL, 0),
-                    lines.CenterLine(_center.BuySide, _buyPoint, OrderSide.BUY, 0),
-                    $"| Predict sell +5s: {_center.PredictSale(_now.AddSeconds(5)):N8} +10s {_center.PredictSale(_now.AddSeconds(10)):N8} +60s {_center.PredictSale(_now.AddMinutes(1)):N8}",
-                    $"| Passing resistance at {(breaking.Sell < DateTime.Now || breaking.Sell == DateTime.MaxValue ? "never" : breaking.Sell.ToString() )} strength: {_center.SellResistanceLife[_center.SellResistanceLife.Keys.Min()].LatestValue:N6}",
-                    $"| Predict buy  +5s: {_center.PredictBuy(_now.AddSeconds(5)):N8} +10s {_center.PredictBuy(_now.AddSeconds(10)):N8} +60s {_center.PredictBuy(_now.AddMinutes(1)):N8}",
-                    $"| Passing resistance at {(breaking.Buy < DateTime.Now || breaking.Buy == DateTime.MaxValue ? "never" : breaking.Buy.ToString())} strength: {_center.BuyResistanceLife[_center.BuyResistanceLife.Keys.Min()].LatestValue:N6}",
-                    $"| Commands: [buy - {_buyCommand}] [sell - {_sellCommand}]"
-                );
+                    lines.CurrentBalanceLine(balance.Btc, "BTC", btcToHns.Hns, btcToHns.Hns + balance.Hns.LatestValue) + $" brings to level: {btcToHns.ToLevel:N8}",
+                    lines.CenterLine(_center.SellSide, _brain.SellPoint, OrderSide.SELL, 0),
+                    lines.CenterLine(_center.BuySide, _brain.BuyPoint, OrderSide.BUY, 0),
+                    $"Predict sell +5s: {_center.PredictSale(_brain.Now.AddSeconds(5)):N8} +10s {_center.PredictSale(_brain.Now.AddSeconds(10)):N8} +60s {_center.PredictSale(_brain.Now.AddMinutes(1)):N8}",
+                    $"Passing resistance at {(breaking.Sell < DateTime.Now || breaking.Sell == DateTime.MaxValue ? "never" : breaking.Sell.ToString())} strength: {_center.SellResistanceLife[_center.SellResistanceLife.Keys.Min()].LatestValue:N6}",
+                    $"Predict buy  +5s: {_center.PredictBuy(_brain.Now.AddSeconds(5)):N8} +10s {_center.PredictBuy(_brain.Now.AddSeconds(10)):N8} +60s {_center.PredictBuy(_brain.Now.AddMinutes(1)):N8}",
+                    $"Passing resistance at {(breaking.Buy < DateTime.Now || breaking.Buy == DateTime.MaxValue ? "never" : breaking.Buy.ToString())} strength: {_center.BuyResistanceLife[_center.BuyResistanceLife.Keys.Min()].LatestValue:N6}",
+                    $"Commands: [buy - {_brain.ExecutingBuyCommand}] [sell - {_brain.ExecutingSellCommand}]",
+                    $"Trend: {_midpoint.LatestValue} -> {_acceleration.LatestValue} -> {_acceleration.Predict().Slope} :: {_spikeSignal.LatestValue} / {_trend}",
+                };
+
+                _stateBox.Update(box);
 
                 var timer = Task.Delay(TimeSpan.FromSeconds(_config.UpdatePeriod));
-                await Task.WhenAll(timer, MaybeUpdate());
+                await Task.WhenAll(timer, _brain.MaybeUpdate());
             }
         }
 
+        /// <summary>
+        /// The bot configuration
+        /// </summary>
         public struct Configuration
         {
             public string BotName { get; }

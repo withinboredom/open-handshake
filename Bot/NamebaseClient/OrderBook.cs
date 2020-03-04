@@ -9,13 +9,15 @@ namespace Bot.NamebaseClient
 {
     public class OrderBook
     {
-        public List<(decimal Level, decimal Ammount)> Bids;
-        public List<(decimal Level, decimal Ammount)> Asks;
+        public List<(decimal Level, decimal Ammount)> Bids { get; set; }
+        public List<(decimal Level, decimal Ammount)> Asks { get; set; }
+        public long LastEventId { get; set; }
 
         public OrderBook(DepthResponse response)
         {
             Bids = response.Bids.Select(x => (Level: decimal.Parse(x[0]), Ammount: decimal.Parse(x[1]))).Reverse().ToList();
             Asks = response.Asks.Select(x => (Level: decimal.Parse(x[0]), Ammount: decimal.Parse(x[1]))).Reverse().ToList();
+            LastEventId = response.LastEventId;
         }
 
         public (decimal Btc, decimal ToLevel) SellHns(decimal hns)

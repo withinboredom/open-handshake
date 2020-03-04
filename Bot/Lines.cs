@@ -29,7 +29,7 @@ namespace Bot
             decimal? totalValue = null)
         {
             var str =
-                $"| Current balance: {balance.LatestValue:N6}{currency} ({balance.Difference:+#,###.####;-#,###.####;0.0000} | {PercentChanged(balance.InitialValue, balance.LatestValue):N2}%) ";
+                $"Current balance: {balance.LatestValue:N6}{currency} ({balance.Difference:+#,###.####;-#,###.####;0.0000} | {PercentChanged(balance.InitialValue, balance.LatestValue):N2}%) ";
             if (convertedValue != null) str += $" value {convertedValue ?? 0:N4} == {totalValue ?? 0:N4}";
 
             return str;
@@ -39,8 +39,8 @@ namespace Bot
         {
             var strSide = side == OrderSide.BUY ? "buy " : "sell";
             return center == null || real == null
-                ? "| Last {side} center: N/A"
-                : $"| Last {strSide} center: {center.Bottom:N8} -> {center.Resistance[0].Level:N8} %ΔB {PercentChanged(center?.Bottom ?? 0m, real.Bottom):N2} %ΔC {PercentChanged(center?.Resistance[0].Level ?? 0m, real.Resistance[0].Level):N2} [{directionIndicator:N5}]";
+                ? "Last {side} center: N/A"
+                : $"Last {strSide} center: {center.Bottom:N8} -> {center.Resistance[0].Level:N8} %ΔB {PercentChanged(center?.Bottom ?? 0m, real.Bottom):N2} %ΔC {PercentChanged(center?.Resistance[0].Level ?? 0m, real.Resistance[0].Level):N2} [{directionIndicator:N5}]";
         }
 
         public void Box(params string[] lines)
@@ -53,7 +53,7 @@ namespace Bot
             ConsoleBox.WriteLine(border);
         }
 
-        public decimal OrderChart(IEnumerable<Order> orders, CeilingData? selling, CeilingData? buying,
+        public decimal OrderChart(IEnumerable<ObservableOrder> orders, CeilingData? selling, CeilingData? buying,
             decimal sellPrediction, decimal buyPrediction)
         {
             if (selling == null || buying == null) return 0;
@@ -62,15 +62,21 @@ namespace Bot
             var potentialBalance = 0m;
             foreach (var order in orders.OrderBy(x => -x.Price))
             {
-                if (lastSide != null && lastSide != order.Side)
+                if (lastSide != null && lastSide != order.RawOrder.Side)
                 {
                     OrderCenterLine(selling, buying);
                     counter = 0;
                 }
 
-                lastSide = order.Side;
+                if (order.IsDeleted)
+                {
+                    ConsoleBox.WriteLine("");
+                    continue;
+                }
 
-                var color = order switch
+                lastSide = order.RawOrder.Side;
+
+                var color = order.RawOrder switch
                 {
                     { } x when x.Status == OrderStatus.PARTIALLY_FILLED => ConsoleColor.Yellow,
                     { } x when x.Side == OrderSide.SELL &&
@@ -83,21 +89,22 @@ namespace Bot
                                x.Status != OrderStatus.FILLED => ConsoleColor.Green,
                     { } x when x.Side == OrderSide.BUY &&
                                x.Status == OrderStatus.FILLED => ConsoleColor.DarkGreen,
+                    { } x when x.Status == OrderStatus.CANCELED || x.Status == OrderStatus.CLOSED => ConsoleColor.Black,
                     _ => ConsoleColor.Gray
                 };
 
                 var postfix = string.Empty;
 
-                if (order.Side == OrderSide.SELL && buyPrediction > order.Price ||
-                    order.Side == OrderSide.BUY && sellPrediction < order.Price)
+                if (order.RawOrder.Side == OrderSide.SELL && buyPrediction > order.Price ||
+                    order.RawOrder.Side == OrderSide.BUY && sellPrediction < order.Price)
                     postfix = " X";
 
                 Console.ForegroundColor = color;
 
                 ConsoleBox.WriteLine(
-                    $"{counter++}. {order.Side.ToString()} order for {order.ExecutedQuantity:N4}/{order.OriginalQuantity:N4} @ {order.Price}{postfix}");
-                potentialBalance += order.Side == OrderSide.BUY
-                    ? order.OriginalQuantity - order.ExecutedQuantity
+                    $"{counter++}. {order.RawOrder.Side.ToString()} order for {order.RawOrder.ExecutedQuantity:N4}/{order.RawOrder.OriginalQuantity:N4} @ {order.Price}{postfix}");
+                potentialBalance += order.RawOrder.Side == OrderSide.BUY
+                    ? order.RawOrder.OriginalQuantity - order.RawOrder.ExecutedQuantity
                     : 0m;
             }
 

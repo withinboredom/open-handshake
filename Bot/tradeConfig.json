@@ -1,12 +1,13 @@
 ﻿{
   "Name": "THE BOT",
-  "LogLevel": "Information", 
+  "LogLevel": "Information",
   "Auth": {
     "Api:key": "Your key",
     "Api:secret": "Your secret"
   },
   "Bot": {
     "NumberOrders": 10,
+    "Brain": "Auto",
     "MinDistanceFromCenter": 0.00000004,
     "CenterChangeThreshold": 10,
     "ResistanceChangeThreshold": 10,
@@ -15,13 +16,13 @@
       {
         "Currency": "HNS",
         "Zero": 2000,
-        "MaximumRisk": 0.5,
+        "MaximumRisk": 0.05,
         "Ratio": -1
       },
       {
         "Currency": "BTC",
         "Zero": 0,
-        "MaximumRisk": 0.5,
+        "MaximumRisk": 0.05,
         "Ratio": -1
       }
     ]
