@@ -27,7 +27,7 @@ namespace Bot.NamebaseClient
             // find first that is greater than 2 std deviations
             var ceilingList =
                 sorted.FirstOrDefault(x =>
-                    decimal.Parse(x[1]) > avgDepth + std / 1m && decimal.Parse(x[1]) != Bottom) ?? sorted.Last();
+                    decimal.Parse(x[1]) > avgDepth + std / 1.5m && decimal.Parse(x[1]) != Bottom) ?? sorted.Last();
 
             var ordered = data.Select(x => (Level: decimal.Parse(x[0]), Amount: decimal.Parse(x[1])))
                 .OrderBy(x => x.Level * (higherIsBetter ? -1 : 1)).ToImmutableList();

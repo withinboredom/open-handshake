@@ -28,14 +28,30 @@ namespace Bot.Brains
             List<ObservableOrder> buys
         ) : base(client, account, center, config, logger, createOrder, sells, buys)
         {
+            _buyType = BuyType.Limit;
         }
 
+        private enum BuyType
+        {
+            Market,
+            Limit,
+        }
+
+        private BuyType _buyType;
+        private bool _hold;
+        
         /// <inheritdoc />
         public override void TrendUpdate(TracableValue newTrend)
         {
+            if (Now - BuyPoint.Timestamp > TimeSpan.FromMinutes(5))
+            {
+                _buyType = BuyType.Market;
+                (_buyTime, ExecutingBuyCommand) = SetTime(_buyTime, ExecutingBuyCommand, Now);
+            }
+
             if (newTrend.LatestValue > 0.8m)
             {
-                (_buyTime, ExecutingBuyCommand) = SetTime(_buyTime, Now + TimeSpan.FromSeconds(120));
+                (_buyTime, ExecutingBuyCommand) = SetTime(_buyTime, ExecutingBuyCommand, Now + TimeSpan.FromSeconds(120));
             } else if (newTrend.LatestValue < 0.1m && ExecutingBuyCommand == TradingBot.Command.DelayedUpdate)
             {
                 ExecutingBuyCommand = TradingBot.Command.None;
@@ -44,6 +60,10 @@ namespace Bot.Brains
 
         public override Task CreateBuySide()
         {
+            if (_hold)
+            {
+                return base.CreateBuySide();
+            }
             _logger.LogInformation($"Evaluating trend buy command: {ExecutingBuyCommand} with scheduled execution at {_buyTime}");
             switch (ExecutingBuyCommand)
             {
@@ -51,22 +71,14 @@ namespace Bot.Brains
                 case { } c when c == TradingBot.Command.None:
                 case { } x when x == TradingBot.Command.DelayedUpdate && Now < _buyTime:
                     return Task.CompletedTask;
+                case TradingBot.Command.PriceUpdate:
+                    ExecutingBuyCommand = TradingBot.Command.None;
+                    return _buys[0]
+                        .Update(
+                            Client.ConvertBtcToHns((_account.Btc.Total - _config.BtcZero) * _config.BtcRisk,
+                                _buys[0].Price), _buys[0].Price);
                 case { } c when c == TradingBot.Command.PriorityUpdate:
                 case { } x when x == TradingBot.Command.DelayedUpdate && Now >= _buyTime:
-                    var buyingPoint = _center.BuyResistanceLife.Select(x =>
-                    {
-                        var predict = x.Value.Predict();
-                        var time = predict.PredictY(0);
-                        return (x.Key, Time: time > Now ? time : DateTime.MaxValue);
-                    }).OrderBy(x => x.Time).First();
-
-                    var index = 0;
-
-                    if (buyingPoint.Time != DateTime.MaxValue)
-                    {
-                        index = _center.BuySide.Resistance.FindIndex(x => x.Level == buyingPoint.Key);
-                    }
-
                     BuyPoint = _center.BuySide;
                     ExecutingBuyCommand = TradingBot.Command.None;
 
@@ -95,8 +107,15 @@ namespace Bot.Brains
 
             var conversion = _center.BuySide.Bottom - _config.MinDistanceFromCenter;
 
-            if(_buys.Count > 1)
-                await _buys[0].Update(Client.ConvertBtcToHns(value, conversion), conversion);
+            if (_buys.Count > 1)
+            {
+                if (!_hold)
+                {
+                    _hold = _buyType == BuyType.Market || _hold;
+                    await _buys[0].Update(Client.ConvertBtcToHns(value, conversion), conversion,
+                        _buyType == BuyType.Limit ? OrderType.LMT : OrderType.MKT);
+                }
+            }
             else
             {
                 await CreateOrder(new SendOrder

@@ -79,6 +79,7 @@ namespace Bot
             None,
             PriorityUpdate,
             DelayedUpdate,
+            PriceUpdate,
         }
 
         /// <summary>
@@ -99,7 +100,8 @@ namespace Bot
         /// <param name="center">The center.</param>
         /// <param name="config">The configuration.</param>
         /// <param name="logger">The logger.</param>
-        private TradingBot(Client client, ObservableAccount account, ObservableCenterPoint center, Configuration config, ILogger logger)
+        private TradingBot(Client client, ObservableAccount account, ObservableCenterPoint center, Configuration config,
+            ILogger logger)
         {
             _client = client;
             _account = account;
@@ -134,33 +136,37 @@ namespace Bot
         /// <param name="e">The <see cref="NotifyCollectionChangedEventArgs"/> instance containing the event data.</param>
         private void OnNewLogs(object sender, NotifyCollectionChangedEventArgs e)
         {
-            switch(e.Action)
+            lock (_logs)
             {
-                case NotifyCollectionChangedAction.Add:
-                    foreach(var line in e.NewItems)
-                    {
-                        if (line is ListLogger.LogLine log)
+                switch (e.Action)
+                {
+                    case NotifyCollectionChangedAction.Add:
+                        foreach (var line in e.NewItems)
                         {
-                            _logs.Lines.Add(new ConsoleBox.Line
+                            if (line is ListLogger.LogLine log)
                             {
-                                Content = log.Content,
-                                Color = log.Level switch
+                                _logs.Lines.Add(new ConsoleBox.Line
                                 {
-                                    LogLevel.None => ConsoleColor.White,
-                                    LogLevel.Error => ConsoleColor.Red,
-                                    LogLevel.Critical => ConsoleColor.DarkRed,
-                                    LogLevel.Debug => ConsoleColor.White,
-                                    LogLevel.Information => ConsoleColor.Cyan,
-                                    LogLevel.Trace => ConsoleColor.White,
-                                    LogLevel.Warning => ConsoleColor.Yellow,
-                                    _ => ConsoleColor.White
-                                }
-                            });
+                                    Content = log.Content,
+                                    Color = log.Level switch
+                                    {
+                                        LogLevel.None => ConsoleColor.White,
+                                        LogLevel.Error => ConsoleColor.Red,
+                                        LogLevel.Critical => ConsoleColor.DarkRed,
+                                        LogLevel.Debug => ConsoleColor.White,
+                                        LogLevel.Information => ConsoleColor.Cyan,
+                                        LogLevel.Trace => ConsoleColor.White,
+                                        LogLevel.Warning => ConsoleColor.Yellow,
+                                        _ => ConsoleColor.White
+                                    }
+                                });
+                            }
                         }
-                    }
-                    ListLogger.Stream.Clear();
 
-                    break;
+                        lock(ListLogger.Stream)
+                            ListLogger.Stream.Clear();
+                        break;
+                }
             }
         }
 
@@ -234,7 +240,7 @@ namespace Bot
             _logs.Render();
 
             Console.SetCursorPosition(0, 0);
-            Console.WriteLine("Reset bot started");
+            _logger.LogInformation("Reset bot started");
             _buys.Clear();
             _sells.Clear();
 
@@ -250,9 +256,9 @@ namespace Bot
             }
 
             Console.ResetColor();
-            Console.Write("Waiting for pending operations...");
+            _logger.LogInformation("Waiting for pending operations...");
             await Task.WhenAll(operations);
-            Console.WriteLine("Done!");
+            _logger.LogInformation("Done!");
         }
 
         /// <summary>
@@ -267,8 +273,8 @@ namespace Bot
 
         private Trend _trend = Trend.Random;
         private TracableValue _midpoint = new TracableValue(600);
-        private TracableValue _acceleration = new TracableValue(600);
-        private TracableValue _spikeSignal = new TracableValue(600);
+        private TracableValue _acceleration = new TracableValue(60);
+        private TracableValue _spikeSignal = new TracableValue(2);
 
         private void DetectTrend()
         {
@@ -277,19 +283,24 @@ namespace Bot
             //_acceleration.LatestValue = slope;
 
             //(slope, _, _) = _acceleration.Predict();
-            (_spikeSignal.LatestValue, _acceleration.LatestValue) = _midpoint.Signal(30, 4.5m, 0.1m);
+            (_spikeSignal.LatestValue, _acceleration.LatestValue) = _midpoint.Signal(30, 4.5m, 0.1m, _center);
 
-            if (_acceleration.LatestValue > 0)
+            // ignore spikes
+            if (_spikeSignal.LatestValue != 0) return;
+
+            var trend = _acceleration.Predict().Slope;
+            
+            if (trend > 1)
             {
-                _trend = Trend.Up;
+                //_trend = Trend.Up;
             }
-            else if (_acceleration.LatestValue < 0)
+            else if (trend < -1)
             {
-                _trend = Trend.Down;
+                //_trend = Trend.Down;
             }
             else
             {
-                _trend = Trend.Random;
+                //_trend = Trend.Random;
             }
         }
 
@@ -310,21 +321,69 @@ namespace Bot
 
             if (!File.Exists("balances.csv"))
             {
-                await File.WriteAllLinesAsync("balances.csv", new string[] { "time,hns,btc,btc value,total,btc conversion rate" });
+                await File.WriteAllLinesAsync("balances.csv", new string[] { "time,hns,btc,btc value,total,btc conversion rate,actual btc value,actual value" });
             }
+
+            if (!File.Exists("robot.csv"))
+            {
+                await File.WriteAllLinesAsync("robot.csv", new[] {"time,avgFilter,upperLine,lowerLine,signal,slope"});
+            }
+
+            ChartGraphics.Data["robot"] = new List<ChartGraphics.Row>();
 
             _logs.Top = _config.NumberOrders * 2 + 1 /*header*/ + 1 /*center*/ + 11;
             _stateBox.Top = _config.NumberOrders * 2 + 2;
             _stateBox.MaxLines = 11;
             _stateBox.Render();
 
+            Console.TreatControlCAsInput = true;
+            Console.CancelKeyPress += (sender, args) =>
+            {
+                DetectTrend();
+                File.Copy("robot.png", "robot-" + DateTime.Now + ".png");
+            };
+
             while (true)
             {
                 Console.ForegroundColor = Console.BackgroundColor == ConsoleColor.Black
                     ? ConsoleColor.White
                     : ConsoleColor.Black;
+
+                if (Console.KeyAvailable)
+                {
+                    var key = Console.ReadKey();
+                    switch (key.Key)
+                    {
+                        case ConsoleKey.S:
+                            _brain.ExecutingSellCommand = Command.PriorityUpdate;
+                            break;
+                        case ConsoleKey.B:
+                            _brain.ExecutingBuyCommand = Command.PriorityUpdate;
+                            break;
+                        case ConsoleKey.Q:
+                            Environment.Exit(0);
+                            break;
+                        case ConsoleKey.DownArrow:
+                            _trend = Trend.Down;
+                            break;
+                        case ConsoleKey.UpArrow:
+                            _trend = Trend.Up;
+                            break;
+                        case ConsoleKey.RightArrow:
+                            _trend = Trend.Random;
+                            break;
+                        case ConsoleKey.I:
+                            _brain.ExecutingBuyCommand = Command.PriceUpdate;
+                            break;
+                        case ConsoleKey.K:
+                            _brain.ExecutingSellCommand = Command.PriceUpdate;
+                            break;
+                    }
+                }
+                
                 _brain.Now = DateTime.Now;
                 DetectTrend();
+                ChartGraphics.WriteChart("robot", "Robot Vision");
 
                 if (_trend == Trend.Random && !(_brain is GridBrain))
                 {
@@ -338,9 +397,9 @@ namespace Bot
                     _brain.ExecutingSellCommand = Command.PriorityUpdate;
                     _brain.ExecutingBuyCommand = Command.PriorityUpdate;
                 }
-                else if (_trend == Trend.Down && !(_brain is GridBrain))
+                else if (_trend == Trend.Down && !(_brain is TrendingDown))
                 {
-                    _brain = new GridBrain(_client, _account, _center, _config, _logger, CreateOrder, _sells, _buys);
+                    _brain = new TrendingDown(_client, _account, _center, _config, _logger, CreateOrder, _sells, _buys);
                     _brain.ExecutingSellCommand = Command.PriorityUpdate;
                     _brain.ExecutingBuyCommand = Command.PriorityUpdate;
                 }
@@ -355,7 +414,7 @@ namespace Bot
                 await File.AppendAllLinesAsync("balances.csv",
                     new[]
                     {
-                        $"{_brain.Now.ToUniversalTime()},{_account.Hns.Total},{_account.Btc.Total},{Client.ConvertBtcToHns(_account.Btc.Total, _center.BuySide.Bottom)},{Client.ConvertBtcToHns(_account.Btc.Total, _center.BuySide.Bottom) + _account.Hns.Total},{_center.BuySide.Bottom}"
+                        $"{_brain.Now.ToUniversalTime()},{_account.Hns.Total},{_account.Btc.Total},{Client.ConvertBtcToHns(_account.Btc.Total, _center.BuySide.Bottom)},{Client.ConvertBtcToHns(_account.Btc.Total, _center.BuySide.Bottom) + _account.Hns.Total},{_center.BuySide.Bottom},{_center.OrderBook.SellBtc(_account.Btc.Total).Hns},{_center.OrderBook.SellBtc(_account.Btc.Total).Hns + _account.Hns.Total}"
                     });
 
                 var lines = new Lines();
@@ -383,9 +442,9 @@ namespace Bot
                     lines.CenterLine(_center.SellSide, _brain.SellPoint, OrderSide.SELL, 0),
                     lines.CenterLine(_center.BuySide, _brain.BuyPoint, OrderSide.BUY, 0),
                     $"Predict sell +5s: {_center.PredictSale(_brain.Now.AddSeconds(5)):N8} +10s {_center.PredictSale(_brain.Now.AddSeconds(10)):N8} +60s {_center.PredictSale(_brain.Now.AddMinutes(1)):N8}",
-                    $"Passing resistance at {(breaking.Sell < DateTime.Now || breaking.Sell == DateTime.MaxValue ? "never" : breaking.Sell.ToString())} strength: {_center.SellResistanceLife[_center.SellResistanceLife.Keys.Min()].LatestValue:N6}",
+                    $"Passing resistance at {(breaking.Sell < DateTime.Now || breaking.Sell == DateTime.MaxValue ? "never" : breaking.Sell.ToString())} strength: {_center.SellResistanceLife[_center.SellResistanceLife.Keys.Min()].LatestValue:N6} @ {_center.SellResistanceLife.Keys.Min()}",
                     $"Predict buy  +5s: {_center.PredictBuy(_brain.Now.AddSeconds(5)):N8} +10s {_center.PredictBuy(_brain.Now.AddSeconds(10)):N8} +60s {_center.PredictBuy(_brain.Now.AddMinutes(1)):N8}",
-                    $"Passing resistance at {(breaking.Buy < DateTime.Now || breaking.Buy == DateTime.MaxValue ? "never" : breaking.Buy.ToString())} strength: {_center.BuyResistanceLife[_center.BuyResistanceLife.Keys.Min()].LatestValue:N6}",
+                    $"Passing resistance at {(breaking.Buy < DateTime.Now || breaking.Buy == DateTime.MaxValue ? "never" : breaking.Buy.ToString())} strength: {_center.BuyResistanceLife[_center.BuyResistanceLife.Keys.Min()].LatestValue:N6} @ {_center.BuyResistanceLife.Keys.Min()}",
                     $"Commands: [buy - {_brain.ExecutingBuyCommand}] [sell - {_brain.ExecutingSellCommand}]",
                     $"Trend: {_midpoint.LatestValue} -> {_acceleration.LatestValue} -> {_acceleration.Predict().Slope} :: {_spikeSignal.LatestValue} / {_trend}",
                 };

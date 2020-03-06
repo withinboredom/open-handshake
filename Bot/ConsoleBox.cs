@@ -201,12 +201,15 @@ namespace Bot
 
                 if (Left == null)
                 {
-                    Left = Console.CursorLeft;
+                    Left = 0;
                 }
 
-                MaxColumns = Console.WindowWidth - Left.Value;
+                MaxColumns = Console.WindowWidth;
 
                 var width = MaxColumns - 5;
+
+                if (width < 0) return;
+                
                 var border = "+-" + new string('-', width) + "-+";
 
                 Console.CursorTop = Top.Value;
@@ -219,7 +222,12 @@ namespace Bot
                 {
                     if (line.Content == null) continue;
                     Console.ForegroundColor = line.Color;
+                    if(width - line.Content.Length > 0)
                     WriteLine(" " + line.Content + new string(' ', width - line.Content.Length));
+                    else
+                    {
+                        WriteLine(" " + line.Content.Substring(0, Math.Min(line.Content.Count(), width)));
+                    }
                 }
                 Console.ResetColor();
             }

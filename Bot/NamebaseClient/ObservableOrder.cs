@@ -21,6 +21,18 @@ namespace Bot.NamebaseClient
             _client = client;
             _logger = logger;
             IsDeleted = false;
+            ChartOrder();
+        }
+
+        private void ChartOrder()
+        {
+            if (IsDeleted) return;
+            ChartGraphics.OrderPositions[RawOrder.OrderId] = new ChartGraphics.OrderPosition
+            {
+                Level = RawOrder.Price,
+                StartTime = RawOrder.CreatedAt.ToDateTime().ToLocalTime(),
+                EndTime = DateTime.Now
+            };
         }
 
         public decimal Quantity => RawOrder.OriginalQuantity;
@@ -37,14 +49,39 @@ namespace Bot.NamebaseClient
 
             var handler = StatusChanged;
             if (previous.Status != RawOrder.Status)
+            {
+                if (RawOrder.Status == OrderStatus.PARTIALLY_FILLED)
+                {
+                    ChartGraphics.OrderFills.Add(new ChartGraphics.OrderFill
+                    {
+                        Level = RawOrder.Price,
+                        Side = RawOrder.Side,
+                        Time = DateTime.Now,
+                        IsFilled = false,
+                    });
+                }
+                else if (RawOrder.Status == OrderStatus.FILLED)
+                {
+                    ChartGraphics.OrderFills.Add(new ChartGraphics.OrderFill
+                    {
+                        Level = RawOrder.Price,
+                        Side = RawOrder.Side,
+                        Time = DateTime.Now,
+                        IsFilled = true,
+                    });
+                }
+
                 handler?.Invoke(this, new StatusUpdateEventArgs
                 {
                     NewStatus = RawOrder.Status,
                     PreviousStatus = previous.Status
                 });
+            }
+
+            ChartOrder();
         }
 
-        public async Task Update(decimal quantity, decimal price)
+        public async Task Update(decimal quantity, decimal price, OrderType type = OrderType.LMT)
         {
             var previous = RawOrder;
             _logger.LogInformation($"Cancelling order {RawOrder.OrderId}");
@@ -52,16 +89,31 @@ namespace Bot.NamebaseClient
 
             if (quantity > 0)
             {
-                RawOrder = await _client.CreateOrder(
-                    new SendOrder
-                    {
-                        Side = RawOrder.Side,
-                        Price = price.ToString(),
-                        Quantity = quantity.ToString(),
-                        Type = RawOrder.Type
-                    });
-                _logger.LogInformation($"Created {RawOrder.OrderId}");
-                IsDeleted = false;
+                try
+                {
+                    RawOrder = await _client.CreateOrder(
+                        type == OrderType.LMT
+                            ? new SendOrder
+                            {
+                                Side = RawOrder.Side,
+                                Price = price.ToString(),
+                                Quantity = quantity.ToString(),
+                                Type = RawOrder.Type
+                            }
+                            : new SendOrder
+                            {
+                                Side = RawOrder.Side,
+                                Quantity = quantity.ToString(),
+                                Type = OrderType.MKT
+                            });
+                    ChartOrder();
+                    _logger.LogInformation($"Created {RawOrder.OrderId}");
+                    IsDeleted = false;
+                }
+                catch (ErrorResponse.OutOfMoney)
+                {
+                    IsDeleted = true;
+                }
             }
             else
             {

@@ -9,7 +9,8 @@ namespace Bot.NamebaseClient.Responses
             Retry,
             SyncTime,
             Fatal,
-            Ignore
+            Ignore,
+            OutOfMoney,
         }
 
         public string Code { get; set; }
@@ -35,8 +36,9 @@ namespace Bot.NamebaseClient.Responses
                 case "REQUEST_UNSUPPORTED_LIMIT":
                 case "REQUEST_MINIMUM_WITHDRAWAL":
                 case "REQUEST_MINIMUM_DEPOSIT":
-                case "REQUEST_MINIMUM_ORDER":
                     return SuggestedRecovery.Fatal;
+                case "REQUEST_MINIMUM_ORDER":
+                    return SuggestedRecovery.OutOfMoney;
                 case "NOT_ALLOWED_TO_TRADE":
                 case "NOT_ALLOWED_TO_DEPOSIT":
                 case "NOT_ALLOWED_TO_WITHDRAW":
@@ -45,7 +47,7 @@ namespace Bot.NamebaseClient.Responses
                 case "WITHDRAWALS_DISABLED":
                     return SuggestedRecovery.Ignore;
                 case "INSUFFICIENT_BALANCE":
-                    return SuggestedRecovery.Fatal;
+                    return SuggestedRecovery.OutOfMoney;
                 case "CANCEL_INVALID":
                 case "CANCEL_UNAUTHORIZED":
                 case "CANCEL_UNKNOWN":
@@ -68,6 +70,11 @@ namespace Bot.NamebaseClient.Responses
 
         public class IgnoreFailure : Exception
         {
+        }
+
+        public class OutOfMoney : Exception
+        {
+            
         }
     }
 }

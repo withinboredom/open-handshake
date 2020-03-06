@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -63,40 +64,73 @@ namespace Bot.NamebaseClient
         {
             while (remaining > 0)
             {
-                var response = await retry();
-                if (response.IsSuccessStatusCode) return response;
-
-                var error = JsonConvert.DeserializeObject<ErrorResponse>(await response.Content.ReadAsStringAsync());
-                switch (error.HowRecovery())
+                try
                 {
-                    case ErrorResponse.SuggestedRecovery.SyncTime:
-                        await GetInfo();
-                        await Task.Delay(TimeSpan.FromMilliseconds(500));
-                        _logger.LogCritical("Updating clock drift!");
-                        throw new ErrorResponse.TimeChanged();
-                    case ErrorResponse.SuggestedRecovery.Fatal:
-                        _logger.LogCritical($"Fatal error: {error.Message} | {error.Code}");
-                        throw new ErrorResponse.FatalError();
-                    case ErrorResponse.SuggestedRecovery.Ignore:
-                        _logger.LogCritical("Ignoring error!");
-                        throw new ErrorResponse.IgnoreFailure();
-                    case ErrorResponse.SuggestedRecovery.Retry:
-                    default:
-                        _logger.LogCritical("Retrying!");
-                        var delay = remaining switch
-                        {
-                            1 => TimeSpan.FromSeconds(10),
-                            2 => TimeSpan.FromSeconds(1),
-                            3 => TimeSpan.FromMilliseconds(500),
-                            _ => TimeSpan.FromSeconds(3)
-                        };
-                        await Task.Delay(delay);
-                        remaining -= 1;
-                        break;
-                }
-                _logger.LogDebug($"Retrying {remaining}");
-            }
+                    var response = await retry();
+                    if (response.IsSuccessStatusCode) return response;
 
+                    ErrorResponse.SuggestedRecovery suggestedRecovery;
+                    string message = String.Empty;
+                    string code = String.Empty;
+                    try
+                    {
+                        var error = JsonConvert.DeserializeObject<ErrorResponse>(
+                            await response.Content.ReadAsStringAsync());
+                        suggestedRecovery = error.HowRecovery();
+                        message = error.Message;
+                        code = error.Code;
+                    }
+                    catch (IOException)
+                    {
+                        suggestedRecovery = ErrorResponse.SuggestedRecovery.Retry;
+                    }
+                    catch (JsonReaderException)
+                    {
+                        suggestedRecovery = ErrorResponse.SuggestedRecovery.Retry;
+                    }
+
+                    switch (suggestedRecovery)
+                    {
+                        case ErrorResponse.SuggestedRecovery.SyncTime:
+                            await GetInfo();
+                            await Task.Delay(TimeSpan.FromMilliseconds(500));
+                            _logger.LogCritical("Updating clock drift!");
+                            throw new ErrorResponse.TimeChanged();
+                        case ErrorResponse.SuggestedRecovery.Fatal:
+                            _logger.LogCritical($"Fatal error: {message} | {code}");
+                            throw new ErrorResponse.FatalError();
+                        case ErrorResponse.SuggestedRecovery.Ignore:
+                            _logger.LogCritical("Ignoring error!");
+                            throw new ErrorResponse.IgnoreFailure();
+                        case ErrorResponse.SuggestedRecovery.OutOfMoney:
+                            _logger.LogCritical("Out of money!");
+                            throw new ErrorResponse.OutOfMoney();
+                        case ErrorResponse.SuggestedRecovery.Retry:
+                        default:
+                            _logger.LogCritical("Retrying!");
+                            var delay = remaining switch
+                            {
+                                1 => TimeSpan.FromSeconds(10),
+                                2 => TimeSpan.FromSeconds(1),
+                                3 => TimeSpan.FromMilliseconds(500),
+                                _ => TimeSpan.FromSeconds(3)
+                            };
+                            await Task.Delay(delay);
+                            remaining -= 1;
+                            break;
+                    }
+
+                    _logger.LogDebug($"Retrying {remaining}");
+                }
+                catch (IOException)
+                {
+                    return await DoRetry(retry, remaining);
+                }
+                catch (TaskCanceledException)
+                {
+                    return await DoRetry(retry, remaining);
+                }
+            }
             throw new ErrorResponse.FatalError();
         }
 

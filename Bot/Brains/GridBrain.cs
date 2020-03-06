@@ -62,7 +62,7 @@ namespace Bot.Brains
             Announce("shutting down");
         }
 
-        protected (DateTime, TradingBot.Command) SetTime(DateTime other, DateTime? set = null)
+        protected (DateTime, TradingBot.Command) SetTime(DateTime other, TradingBot.Command command, DateTime? set = null)
         {
             if (set == null) set = Now;
 
@@ -77,9 +77,18 @@ namespace Bot.Brains
         /// <inheritdoc />
         public void BtcUpdated(ObservableAccount sender, ObservableAccount.BalanceUpdatedEventArgs e)
         {
-            if (Lines.PercentChanged(e.PreviousAmount, e.NewAmount) > 0.15m)
+            /*
+            if (Lines.PercentChanged(e.PreviousAmount, e.NewAmount) > 0.5m)
             {
                 (_buyTime, ExecutingBuyCommand) = SetTime(_buyTime, Now.AddSeconds(30));
+            }
+            */
+            if (Lines.PercentChanged(e.PreviousAmount, e.NewAmount) > 0.5m)
+            {
+                if (ExecutingBuyCommand == TradingBot.Command.None)
+                {
+                    ExecutingBuyCommand = TradingBot.Command.PriceUpdate;
+                }
             }
             _logger.LogInformation($"Detected change in BTC: {e.NewAmount - e.PreviousAmount:N8}");
         }
@@ -87,9 +96,18 @@ namespace Bot.Brains
         /// <inheritdoc />
         public void HnsUpdated(ObservableAccount sender, ObservableAccount.BalanceUpdatedEventArgs e)
         {
-            if (Lines.PercentChanged(e.PreviousAmount, e.NewAmount) > 0.15m)
+            /*
+            if (Lines.PercentChanged(e.PreviousAmount, e.NewAmount) > 0.5m)
             {
                 (_sellTime, ExecutingSellCommand) = SetTime(_sellTime, Now.AddSeconds(30));
+            }
+            */
+            if (Lines.PercentChanged(e.PreviousAmount, e.NewAmount) > 0.5m)
+            {
+                if (ExecutingSellCommand == TradingBot.Command.None)
+                {
+                    ExecutingSellCommand = TradingBot.Command.PriceUpdate;
+                }
             }
             _logger.LogInformation($"Detected change in HNS: {e.NewAmount - e.PreviousAmount:N6}");
         }
@@ -110,7 +128,7 @@ namespace Bot.Brains
                 {
                     if (_buyHeavy != Client.Heavy.Bottom)
                     {
-                        (_buyTime, ExecutingBuyCommand) = SetTime(_buyTime, Now.AddMinutes(5));
+                        (_buyTime, ExecutingBuyCommand) = SetTime(_buyTime, ExecutingBuyCommand, Now.AddMinutes(5));
                     }
 
                     _buyHeavy = Client.Heavy.Bottom;
@@ -119,7 +137,7 @@ namespace Bot.Brains
                 {
                     if (_buyHeavy != Client.Heavy.Top)
                     {
-                        (_buyTime, ExecutingBuyCommand) = SetTime(_buyTime, Now.AddMinutes(5));
+                        (_buyTime, ExecutingBuyCommand) = SetTime(_buyTime, ExecutingBuyCommand, Now.AddMinutes(5));
                     }
 
                     _buyHeavy = Client.Heavy.Top;
@@ -128,7 +146,7 @@ namespace Bot.Brains
                 {
                     if (_buyHeavy != Client.Heavy.None)
                     {
-                        (_buyTime, ExecutingBuyCommand) = SetTime(_buyTime, Now.AddMinutes(5));
+                        (_buyTime, ExecutingBuyCommand) = SetTime(_buyTime, ExecutingBuyCommand, Now.AddMinutes(5));
                     }
 
                     _buyHeavy = Client.Heavy.None;
@@ -142,7 +160,7 @@ namespace Bot.Brains
 
             if (percentBottom <= _config.SellBottomChange && percentTop <= _config.SellTopChange) return;
 
-            (_buyTime, ExecutingBuyCommand) = SetTime(_buyTime, Now);
+            (_buyTime, ExecutingBuyCommand) = SetTime(_buyTime, ExecutingBuyCommand, Now + TimeSpan.FromMinutes(1));
             _logger.LogInformation($"Major change detected, recalculating buy side order book");
         }
 
@@ -152,8 +170,9 @@ namespace Bot.Brains
             _logger.LogInformation("Detected sell side ceiling change");
             var prediction = _center.PredictSale(DateTime.Now.AddSeconds(5));
 
-            var currentValueHns = (_account.Hns.Total - _config.HnsZero) /
-                                  Client.ConvertBtcToHns(_account.Btc.Total - _config.BtcZero, _center.SellSide.Bottom);
+            var btc = Client.ConvertBtcToHns(_account.Btc.Total - _config.BtcZero, _center.SellSide.Bottom);
+            var currentValueHns =
+                btc <= 0 ? (_account.Hns.Total - _config.HnsZero) : (_account.Hns.Total - _config.HnsZero) / btc;
 
             if (_config.HnsRatio > 0)
             {
@@ -161,7 +180,7 @@ namespace Bot.Brains
                 {
                     if (_sellHeavy != Client.Heavy.Bottom)
                     {
-                        (_sellTime, ExecutingSellCommand) = SetTime(_sellTime, Now.AddMinutes(5));
+                        (_sellTime, ExecutingSellCommand) = SetTime(_sellTime, ExecutingSellCommand, Now.AddMinutes(5));
                     }
 
                     _sellHeavy = Client.Heavy.Bottom;
@@ -170,7 +189,7 @@ namespace Bot.Brains
                 {
                     if (_sellHeavy != Client.Heavy.Top)
                     {
-                        (_sellTime, ExecutingSellCommand) = SetTime(_sellTime, Now.AddMinutes(5));
+                        (_sellTime, ExecutingSellCommand) = SetTime(_sellTime, ExecutingSellCommand, Now.AddMinutes(5));
                     }
 
                     _sellHeavy = Client.Heavy.Top;
@@ -179,7 +198,7 @@ namespace Bot.Brains
                 {
                     if (_sellHeavy != Client.Heavy.None)
                     {
-                        (_sellTime, ExecutingSellCommand) = SetTime(_sellTime, Now.AddMinutes(5));
+                        (_sellTime, ExecutingSellCommand) = SetTime(_sellTime, ExecutingSellCommand, Now.AddMinutes(5));
                     }
 
                     _sellHeavy = Client.Heavy.None;
@@ -194,7 +213,7 @@ namespace Bot.Brains
             if (percentBottom <= _config.SellBottomChange && percentTop <= _config.SellTopChange) return;
 
             _logger.LogInformation($"Major change detected, recalculating sell side order book");
-            (_sellTime, ExecutingSellCommand) = SetTime(_sellTime, Now);
+            (_sellTime, ExecutingSellCommand) = SetTime(_sellTime, ExecutingSellCommand, Now + TimeSpan.FromMinutes(1));
         }
 
         /// <inheritdoc />
@@ -208,22 +227,22 @@ namespace Bot.Brains
                 case OrderStatus.CLOSED:
                     if (_sells.Contains(sender))
                     {
-                        (_sellTime, ExecutingSellCommand) = SetTime(_sellTime, Now.AddSeconds(30));
+                        (_sellTime, ExecutingSellCommand) = SetTime(_sellTime, ExecutingSellCommand, Now.AddSeconds(30));
                     }
                     else if (_buys.Contains(sender))
                     {
-                        (_buyTime, ExecutingBuyCommand) = SetTime(_buyTime, Now.AddSeconds(30));
+                        (_buyTime, ExecutingBuyCommand) = SetTime(_buyTime, ExecutingSellCommand, Now.AddSeconds(30));
                     }
 
                     break;
                 case OrderStatus.PARTIALLY_FILLED:
                     if (_sells.Contains(sender) && ExecutingSellCommand == TradingBot.Command.DelayedUpdate)
                     {
-                        (_sellTime, ExecutingSellCommand) = SetTime(_sellTime, Now.AddSeconds(30));
+                        (_sellTime, ExecutingSellCommand) = SetTime(_sellTime, ExecutingSellCommand, Now.AddSeconds(30));
                     }
                     else if (_buys.Contains(sender) && ExecutingBuyCommand == TradingBot.Command.DelayedUpdate)
                     {
-                        (_buyTime, ExecutingBuyCommand) = SetTime(_buyTime, Now.AddSeconds(30));
+                        (_buyTime, ExecutingBuyCommand) = SetTime(_buyTime, ExecutingSellCommand, Now.AddSeconds(30));
                     }
 
                     break;
@@ -286,6 +305,17 @@ namespace Bot.Brains
                 case { } c when c == TradingBot.Command.None:
                 case { } x when x == TradingBot.Command.DelayedUpdate && Now < _buyTime:
                     return Task.CompletedTask;
+                case TradingBot.Command.PriceUpdate:
+                    var operations = new List<Task>();
+                    foreach (var order in _buys)
+                    {
+                        var quantity = Client.ConvertBtcToHns((_account.Btc.Total - _config.BtcZero) * _config.BtcRisk / _config.NumberOrders,
+                            order.Price);
+                        operations.Add(order.Update(quantity, order.Price));
+                    }
+
+                    ExecutingBuyCommand = TradingBot.Command.None;
+                    return Task.WhenAll(operations);
                 case { } c when c == TradingBot.Command.PriorityUpdate:
                 case { } x when x == TradingBot.Command.DelayedUpdate && Now >= _buyTime:
                     var buyingPoint = _center.BuyResistanceLife.Select(x =>
@@ -301,6 +331,12 @@ namespace Bot.Brains
                     {
                         index = _center.BuySide.Resistance.FindIndex(x => x.Level == buyingPoint.Key);
                     }
+                    
+                    while (_center.BuySide.Resistance[index].Level - _center.BuySide.Bottom < 0.000005m)
+                    {
+                        if (index + 1 >= _center.BuySide.Resistance.Count) break;
+                        index += 1;
+                    }
 
                     BuyPoint = _center.BuySide;
                     ExecutingBuyCommand = TradingBot.Command.None;
@@ -314,7 +350,7 @@ namespace Bot.Brains
         /// Creates the sell side.
         /// </summary>
         /// <returns></returns>
-        public Task CreateSellSide()
+        public virtual Task CreateSellSide()
         {
             _logger.LogInformation($"Evaluating buy command: {ExecutingSellCommand} with scheduled execution at {_sellTime}");
             switch (ExecutingSellCommand)
@@ -323,6 +359,16 @@ namespace Bot.Brains
                 case { } c when c == TradingBot.Command.None:
                 case { } x when x == TradingBot.Command.DelayedUpdate && Now < _sellTime:
                     return Task.CompletedTask;
+                case TradingBot.Command.PriceUpdate:
+                    var operations = new List<Task>();
+                    foreach (var order in _sells)
+                    {
+                        var quantity = (_account.Hns.Total - _config.HnsZero) * _config.HnsRisk / _config.NumberOrders;
+                        operations.Add(order.Update(quantity, order.Price));
+                    }
+
+                    ExecutingSellCommand = TradingBot.Command.None;
+                    return Task.WhenAll(operations);
                 case { } c when c == TradingBot.Command.PriorityUpdate:
                 case { } x when x == TradingBot.Command.DelayedUpdate && Now >= _sellTime:
                     var sellingPoint = _center.SellResistanceLife.Select(x =>
@@ -337,6 +383,12 @@ namespace Bot.Brains
                     if (sellingPoint.Time != DateTime.MaxValue)
                     {
                         sellIndex = _center.SellSide.Resistance.FindIndex(x => x.Level == sellingPoint.Key);
+                    }
+
+                    while (_center.SellSide.Resistance[sellIndex].Level - _center.SellSide.Bottom < 0.00001m)
+                    {
+                        if (sellIndex + 1 >= _center.SellSide.Resistance.Count) break;
+                        sellIndex += 1;
                     }
 
                     SellPoint = _center.SellSide;

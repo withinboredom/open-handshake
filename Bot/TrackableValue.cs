@@ -1,8 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.IO;
 using System.Linq;
 using System.Security.Cryptography.X509Certificates;
+using Bot.NamebaseClient;
 
 namespace Bot
 {
@@ -68,7 +70,7 @@ namespace Bot
             return (decimal) Math.Sqrt((double) sumOfSquares / (data.Count() - 1));
         }
 
-        public (int Signal, decimal Slope) Signal(int lag, decimal threshold, decimal influence)
+        public (int Signal, decimal Slope) Signal(int lag, decimal threshold, decimal influence, ObservableCenterPoint center)
         {
             var input = _values.ToList();
 
@@ -78,6 +80,8 @@ namespace Bot
             var filteredY = input.Select(x => x.Value).ToArray();
             var avgFilter = new decimal[input.Count];
             var stdFilter = new decimal[input.Count];
+            
+            var sloper = new TracableValue(input.Count);
 
             var initialWindow = new List<decimal>(filteredY).Skip(0).Take(lag).ToList();
             avgFilter[lag - 1] = initialWindow.Average();
@@ -103,26 +107,23 @@ namespace Bot
 
                 avgFilter[i] = tmpMean;
                 stdFilter[i] = tmpStdDev;
+                sloper.LatestValue = tmpMean;
             }
-
-            var sumCodviates = 0m;
-            var sumOf = (X: 0m, Y: 0m);
-            var sumOfSqr = (X: 0m, Y: 0m);
-            for (var i = 0; i < avgFilter.Length; i++)
+            
+            File.AppendAllLines("robot.csv", new []{$"{DateTime.Now},{avgFilter.Last()},{avgFilter.Last() + threshold * stdFilter.Last()},{avgFilter.Last() - threshold * stdFilter.Last()},{signals.Last()},{sloper.Predict().Slope}"});
+            ChartGraphics.Data["robot"].Add(new ChartGraphics.Row
             {
-                var x = i;
-                var y = avgFilter[i];
-                sumCodviates += x * y;
-                sumOf.X += x;
-                sumOf.Y += y;
-                sumOfSqr.X += x * x;
-                sumOfSqr.Y += y * y;
-            }
+                High = avgFilter.Last() + threshold * stdFilter.Last(),
+                Low = avgFilter.Last() - threshold * stdFilter.Last(),
+                MidPoint = avgFilter.Last(),
+                Raw = input.Last().Value,
+                Signal = signals.Last(),
+                Time = input.Last().AddedAt,
+                BottomCeiling = center.BuySide.Bottom,
+                TopCeiling = center.SellSide.Bottom,
+            });
 
-            var sCo = sumCodviates - sumOf.X * sumOf.Y / (decimal) avgFilter.Length;
-            var ss = (X: sumOfSqr.X - sumOf.X * sumOf.X / (decimal) avgFilter.Length, Y: 0);
-
-            return (signals.Last(), sCo / ss.X);
+            return (signals.Last(), sloper.Predict().Slope);
         }
 
         public (decimal Slope, Func<DateTime, decimal> PredictX, Func<decimal, DateTime> PredictY) Predict()

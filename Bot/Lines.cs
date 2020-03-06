@@ -60,18 +60,20 @@ namespace Bot
             OrderSide? lastSide = null;
             var counter = 0;
             var potentialBalance = 0m;
+            var renderedLines = 0;
             foreach (var order in orders.OrderBy(x => -x.Price))
             {
+                if (order.IsDeleted)
+                {
+                    continue;
+                }
+
+                renderedLines += 1;
+                
                 if (lastSide != null && lastSide != order.RawOrder.Side)
                 {
                     OrderCenterLine(selling, buying);
                     counter = 0;
-                }
-
-                if (order.IsDeleted)
-                {
-                    ConsoleBox.WriteLine("");
-                    continue;
                 }
 
                 lastSide = order.RawOrder.Side;
@@ -109,6 +111,11 @@ namespace Bot
             }
 
             OrderCenterLine(selling, buying);
+
+            for (var i = renderedLines; i < orders.Count(); i++)
+            {
+                ConsoleBox.WriteLine("");
+            }
 
             Console.ResetColor();
 

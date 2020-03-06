@@ -9,20 +9,20 @@
     "NumberOrders": 10,
     "Brain": "Auto",
     "MinDistanceFromCenter": 0.00000004,
-    "CenterChangeThreshold": 10,
+    "CenterChangeThreshold": 3,
     "ResistanceChangeThreshold": 10,
     "UpdatePeriod": 1,
     "Balances": [
       {
         "Currency": "HNS",
         "Zero": 2000,
-        "MaximumRisk": 0.05,
+        "MaximumRisk": 0.5,
         "Ratio": -1
       },
       {
         "Currency": "BTC",
         "Zero": 0,
-        "MaximumRisk": 0.05,
+        "MaximumRisk": 0.5,
         "Ratio": -1
       }
     ]
