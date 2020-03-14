@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Bot.Brains;
+using Bot.Charting;
 using Bot.NamebaseClient;
 using Bot.NamebaseClient.Requests;
 using Bot.NamebaseClient.Responses;
@@ -163,8 +164,16 @@ namespace Bot
                             }
                         }
 
-                        lock(ListLogger.Stream)
-                            ListLogger.Stream.Clear();
+                        try
+                        {
+                            lock (ListLogger.Stream)
+                                ListLogger.Stream.Clear();
+                        }
+                        catch
+                        {
+                            // fuck you
+                        }
+
                         break;
                 }
             }
@@ -383,9 +392,47 @@ namespace Bot
                 
                 _brain.Now = DateTime.Now;
                 DetectTrend();
+                ChartGraphics.HnsBalance.Add(new ChartGraphics.Point
+                {
+                    Time = _brain.Now.ToUniversalTime(),
+                    Value = _account.Hns.Total + _center.OrderBook.SellBtc(_account.Btc.Total).Hns,
+                });
+                ChartGraphics.PerfectBalance.Add(new ChartGraphics.Point
+                {
+                    Time = _brain.Now.ToUniversalTime(),
+                    Value = _account.Hns.Total + _buys.Sum(x =>
+                    {
+                        if (x.RawOrder.Status == OrderStatus.NEW)
+                        {
+                            return x.RawOrder.OriginalQuantity;
+                        }
+
+                        if (x.RawOrder.Status == OrderStatus.PARTIALLY_FILLED)
+                        {
+                            return x.RawOrder.OriginalQuantity - x.RawOrder.ExecutedQuantity;
+                        }
+
+                        return 0;
+                    }) + _center.OrderBook.SellBtc(_account.Btc.Total - _buys.Sum(x =>
+                    {
+                        if (x.RawOrder.Status == OrderStatus.NEW)
+                        {
+                            return x.RawOrder.OriginalQuantity * x.RawOrder.Price;
+                        }
+
+                        if (x.RawOrder.Status == OrderStatus.PARTIALLY_FILLED)
+                        {
+                            return (x.RawOrder.OriginalQuantity - x.RawOrder.ExecutedQuantity) * x.RawOrder.Price;
+                        }
+                        
+                        return 0;
+                    })).Hns
+                });
+                ChartGraphics.Asks.AddValue(_brain.Now.ToUniversalTime(), _center.OrderBook.Asks);
+                ChartGraphics.Bids.AddValue(_brain.Now.ToUniversalTime(), _center.OrderBook.Bids);
                 ChartGraphics.WriteChart("robot", "Robot Vision");
 
-                if (_trend == Trend.Random && !(_brain is GridBrain))
+                if (_trend == Trend.Random && _brain.GetType().IsSubclassOf(typeof(GridBrain)))
                 {
                     _brain = new GridBrain(_client, _account, _center, _config, _logger, CreateOrder, _sells, _buys);
                     _brain.ExecutingSellCommand = Command.PriorityUpdate;

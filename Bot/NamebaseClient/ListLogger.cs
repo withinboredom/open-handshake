@@ -22,10 +22,18 @@ namespace Bot.NamebaseClient
         {
             if(IsEnabled(logLevel))
             {
-                Stream.Add(new LogLine {
-                    Level = logLevel,
-                    Content = formatter.Invoke(state, exception)
-                });
+                try
+                {
+                    Stream.Add(new LogLine
+                    {
+                        Level = logLevel,
+                        Content = formatter.Invoke(state, exception)
+                    });
+                }
+                catch
+                {
+                    // not much to do...
+                }
                 //File.AppendAllText("log.txt", $"{formatter(state, exception)}\r\n");
             }
         }

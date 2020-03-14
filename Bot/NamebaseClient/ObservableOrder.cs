@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Threading.Tasks;
+using Bot.Charting;
 using Bot.NamebaseClient.Requests;
 using Bot.NamebaseClient.Responses;
 using Microsoft.Extensions.Logging;

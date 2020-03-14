@@ -76,6 +76,10 @@ namespace Bot.NamebaseClient
                     {
                         var error = JsonConvert.DeserializeObject<ErrorResponse>(
                             await response.Content.ReadAsStringAsync());
+                        if (error == null)
+                        {
+                            throw new IOException();
+                        }
                         suggestedRecovery = error.HowRecovery();
                         message = error.Message;
                         code = error.Code;

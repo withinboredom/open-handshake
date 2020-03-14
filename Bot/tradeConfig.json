@@ -15,7 +15,7 @@
     "Balances": [
       {
         "Currency": "HNS",
-        "Zero": 2000,
+        "Zero": 2500,
         "MaximumRisk": 0.5,
         "Ratio": -1
       },
